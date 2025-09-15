@@ -28,6 +28,9 @@ class HTTPBridge {
     this.initialized = false;
     this.initPromise = null;
 
+    // Request-scoped credentials storage
+    this.requestCredentials = new Map(); // requestId -> { perplexityKey }
+
     this.setupExpress();
     this.spawnChild();
   }
@@ -125,6 +128,14 @@ class HTTPBridge {
         });
       }
 
+      // Extract per-request credentials from headers
+      const perplexityKey = req.headers["x-perplexity-key"];
+
+      // Store credentials for this request (will be cleaned up after response)
+      if (perplexityKey) {
+        this.requestCredentials.set(id, { perplexityKey });
+      }
+
       try {
         if (!this.child || this.child.killed) {
           throw new Error("STDIO child process is not running");
@@ -136,26 +147,46 @@ class HTTPBridge {
         // Map method names to MCP SDK expected format
         const normalized = this.normalizeMethod(method, params);
 
+        // Inject auth context for tools that need per-request credentials
+        let enhancedParams = normalized.params;
+        if (
+          perplexityKey &&
+          normalized.method === "tools/call" &&
+          normalized.params?.name === "fetch_perplexity_data"
+        ) {
+          enhancedParams = {
+            ...normalized.params,
+            _auth: { perplexityKey }, // Internal auth envelope, not logged
+          };
+        }
+
         const result = await this.sendToChild({
           jsonrpc: "2.0",
           method: normalized.method,
-          params: normalized.params,
+          params: enhancedParams,
           id,
         });
+
+        // Clean up credentials after request completion
+        this.requestCredentials.delete(id);
+
         const duration = Date.now() - startTime;
 
         console.error(
           `[BRIDGE] ${normalized.method} completed in ${duration}ms`
         );
 
-        if (duration > 60000) {
+        if (duration > 5000) {
           console.error(
-            `[BRIDGE] SLO_VIOLATION: ${normalized.method} took ${duration}ms (>60s)`
+            `[BRIDGE] SLO_WARNING: ${normalized.method} took ${duration}ms (>5s)`
           );
         }
 
         res.json(result);
       } catch (error) {
+        // Clean up credentials on error
+        this.requestCredentials.delete(id);
+
         const duration = Date.now() - startTime;
         console.error(
           `[BRIDGE] ${method} failed after ${duration}ms:`,

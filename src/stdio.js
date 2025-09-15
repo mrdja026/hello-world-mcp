@@ -158,8 +158,10 @@ class StdioMCPServer {
       },
     ];
 
-    // Add Perplexity tool if API key is configured
-    if (PERPLEXITY_CONFIG.apiKey) {
+    // Add Perplexity tool if API key is configured or MCP_ENABLE_PERPLEXITY is set
+    const enablePerplexity =
+      PERPLEXITY_CONFIG.apiKey || process.env.MCP_ENABLE_PERPLEXITY === "1";
+    if (enablePerplexity) {
       tools.push({
         name: "fetch_perplexity_data",
         description: "Search for information using Perplexity AI",
@@ -206,7 +208,9 @@ class StdioMCPServer {
     const resources = [];
 
     // Add search history resources if Perplexity is enabled
-    if (PERPLEXITY_CONFIG.apiKey) {
+    const enablePerplexity =
+      PERPLEXITY_CONFIG.apiKey || process.env.MCP_ENABLE_PERPLEXITY === "1";
+    if (enablePerplexity) {
       resources.push(
         {
           uri: "search://history/",
@@ -642,10 +646,14 @@ class StdioMCPServer {
   }
 
   async handleFetchPerplexityData(args) {
-    if (!PERPLEXITY_CONFIG.apiKey) {
+    // Extract per-request auth and clean args
+    const { _auth, ...cleanArgs } = args || {};
+    const perplexityKey = _auth?.perplexityKey || PERPLEXITY_CONFIG.apiKey;
+
+    if (!perplexityKey) {
       throw new McpError(
         ErrorCode.InternalError,
-        "Perplexity API key not configured"
+        "Perplexity API key not configured. Provide X-Perplexity-Key header or set PERPLEXITY_API_KEY environment variable."
       );
     }
 
@@ -656,7 +664,7 @@ class StdioMCPServer {
       return_citations = true,
       return_sources = true,
       max_results,
-    } = args || {};
+    } = cleanArgs;
 
     if (!query) {
       throw new McpError(ErrorCode.InvalidParams, "Query is required");
@@ -722,7 +730,7 @@ class StdioMCPServer {
         body,
         {
           headers: {
-            Authorization: `Bearer ${PERPLEXITY_CONFIG.apiKey}`,
+            Authorization: `Bearer ${perplexityKey}`,
             "Content-Type": "application/json",
           },
         }
