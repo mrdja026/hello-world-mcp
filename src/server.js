@@ -12,14 +12,16 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import axios from "axios";
 import dotenv from "dotenv";
+import express from "express";
+import cors from "cors";
 
 // Load environment variables
 dotenv.config();
 
 // Configuration from environment variables
 const JIRA_CONFIG = {
-  baseUrl: "https://username.atlassian.net" || process.env.JIRA_BASE_URL,
-  email: process.env.JIRA_EMAIL || process.env.JIRA_EMAIL,
+  baseUrl: process.env.JIRA_BASE_URL || "https://username.atlassian.net",
+  email: process.env.JIRA_EMAIL,
   apiToken: process.env.JIRA_API_TOKEN,
 };
 
@@ -248,7 +250,100 @@ Description: ${info.description}`,
     await this.server.connect(transport);
     console.error("Local MCP Server running on stdio");
   }
+
+  // HTTP JSON-RPC endpoint for web integrations
+  async startHttp(port = 4000) {
+    const app = express();
+    
+    // Basic CORS for localhost only
+    app.use(cors({
+      origin: ['http://localhost:8080', 'http://127.0.0.1:8080'],
+      credentials: true
+    }));
+    app.use(express.json());
+
+    // Health check endpoint
+    app.get('/health', (req, res) => {
+      res.json({ status: 'ok', transport: 'http', stdio: false });
+    });
+
+    // Main MCP JSON-RPC endpoint
+    app.post('/mcp', async (req, res) => {
+      const { method, params, id = Date.now() } = req.body || {};
+      
+      // Optional simple auth via header
+      const authToken = process.env.MCP_HTTP_TOKEN;
+      if (authToken && req.headers.authorization !== `Bearer ${authToken}`) {
+        return res.status(401).json({
+          jsonrpc: "2.0",
+          error: { code: -32001, message: "Unauthorized" },
+          id
+        });
+      }
+
+      try {
+        let result;
+        switch (method) {
+          case "tools/list":
+          case "listTools":
+            result = await this.handleListTools();
+            break;
+          case "tools/call":
+          case "callTool":
+            result = await this.handleCall({ params });
+            break;
+          case "resources/list":
+            result = await this.handleListResources();
+            break;
+          case "resources/read":
+          case "readResource":
+            result = await this.handleReadResource({ params });
+            break;
+          default:
+            return res.status(400).json({
+              jsonrpc: "2.0",
+              error: { code: -32601, message: `Unknown method: ${method}` },
+              id
+            });
+        }
+
+        res.json({
+          jsonrpc: "2.0",
+          result,
+          id
+        });
+      } catch (error) {
+        console.error("HTTP MCP error:", error);
+        const isMcpError = error instanceof McpError;
+        res.status(isMcpError ? 400 : 500).json({
+          jsonrpc: "2.0",
+          error: {
+            code: isMcpError ? error.code : -32603,
+            message: error.message || "Internal error"
+          },
+          id
+        });
+      }
+    });
+
+    return new Promise((resolve, reject) => {
+      const server = app.listen(port, '127.0.0.1', () => {
+        console.error(`MCP HTTP server running on http://127.0.0.1:${port}`);
+        resolve(server);
+      });
+      server.on('error', reject);
+    });
+  }
 }
 
-// Launch
-new LocalMCPServer().start().catch(console.error);
+// Launch - support both stdio and HTTP modes
+const mcpServer = new LocalMCPServer();
+
+// Always start stdio transport
+mcpServer.start().catch(console.error);
+
+// Optionally start HTTP if MCP_HTTP_PORT is set
+const httpPort = process.env.MCP_HTTP_PORT;
+if (httpPort) {
+  mcpServer.startHttp(parseInt(httpPort, 10)).catch(console.error);
+}

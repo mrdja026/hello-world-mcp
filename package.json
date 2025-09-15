@@ -3,20 +3,26 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Local MCP server with add numbers and JIRA tools",
-  "main": "server.js",
+  "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "stdio": "node src/stdio.js",
+    "dev:stdio": "node --watch src/stdio.js",
+    "http": "node src/http-bridge.js",
+    "dev:http": "node --watch src/http-bridge.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.4.0",
     "axios": "^1.11.0",
-    "dotenv": "^17.2.2"
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
+    "express": "^4.21.2"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "bin": {
-    "local-mcp-server": "./server.js"
+    "local-mcp-server": "./src/server.js"
   }
 }
