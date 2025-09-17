@@ -17,8 +17,11 @@ This MCP server is designed as a **pure data backbone** for AI applications, pro
 
 ### 🔧 JIRA Features
 
-- **Enhanced Ticket Fetching**: Single API call gets complete ticket data
-- **Dynamic Story Points Discovery**: Automatically finds custom field IDs
+- **Enhanced Ticket Fetching**: Single API call gets complete ticket data using `*all` fields
+- **Dynamic Custom Field Discovery**: Automatically finds Story Points, Sprint, and Epic Link field IDs
+- **Sprint Integration**: Full sprint data including active sprint, history, and goals
+- **Epic Relationship Detection**: Supports both modern parent-based and legacy Epic Link approaches
+- **Enhanced Time Tracking**: Pretty formatted strings, raw seconds, and aggregate times (with subtasks)
 - **ADF Description Parsing**: Handles both Cloud (ADF) and Server (HTML) formats
 - **Safe Property Access**: Null-safe field access prevents crashes
 - **Comprehensive Error Handling**: Specific error messages for auth, permissions, not found
@@ -187,15 +190,18 @@ import('./src/jira-client.js').then(async m => {
 
 ### What the Enhanced Client Provides
 
-- **Comprehensive Data**: Single API call fetches complete ticket information
-- **Dynamic Field Discovery**: Automatically finds Story Points custom fields across different JIRA instances
+- **Comprehensive Data**: Single API call fetches complete ticket information using `*all` fields
+- **Advanced Agile Features**: Sprint data, Epic relationships, and Story Points
+- **Dynamic Field Discovery**: Automatically finds custom fields across different JIRA instances
+- **Sprint Management**: Active sprint detection, sprint history, goals, and dates
+- **Epic Relationships**: Supports both modern parent concept and legacy Epic Link custom field
+- **Enhanced Time Tracking**: Pretty strings, raw seconds, and aggregate times including subtasks
 - **ADF Processing**: Converts Atlassian Document Format to readable plain text
 - **Related Issues**: Normalized linked issues with direction indicators
-- **Time Tracking**: Original estimate, remaining, and time spent information
 - **Attachments & Comments**: Recent activity and file information
 - **Parent/Subtask Relationships**: Complete hierarchy information
 
-### Sample JIRA Response
+### Sample Enhanced JIRA Response
 
 ```
 JIRA Ticket: SCRUM-8
@@ -218,6 +224,17 @@ TIMELINE:
 
 DESCRIPTION:
 This story involves creating basic calculation functions...
+
+ACTIVE SPRINT:
+• Name: SCRUM Sprint 1
+• State: active
+• Start: 11/09/2025
+• End: 09/10/2025
+• Goal: Finish all the tasks
+
+SPRINT HISTORY: 1 total (1 active)
+
+EPIC: SCRUM-6 (via parent)
 
 PARENT ISSUE:
 • SCRUM-6: Hello world epic (To Do)

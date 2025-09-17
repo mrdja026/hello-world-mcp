@@ -35,21 +35,42 @@ function adfToText(adf) {
 }
 
 /**
- * Dynamic Story Points field discovery
- * Resolves the site-specific custom field id for Story Points by scanning the `names` map
+ * Generic field discovery utility
+ * Resolves site-specific custom field IDs by scanning the `names` map
  * returned when using `expand=names` on the Get Issue API.
+ */
+function findFieldIdByName(names = {}, regexes = []) {
+  for (const [fieldId, display] of Object.entries(names)) {
+    if (regexes.some((re) => re.test(display))) return fieldId; // e.g. "customfield_10016"
+  }
+  return null;
+}
+
+/**
+ * Dynamic Story Points field discovery
  * Works for "Story Points" and "Story point estimate" across project types.
  */
 function findStoryPointsFieldId(names = {}) {
-  const entries = Object.entries(names); // [ [fieldId, displayName], ... ]
-  const matcher = /story\s*points?/i;
-  const altMatcher = /story\s*point\s*estimate/i;
+  return findFieldIdByName(names, [
+    /story\s*points?/i,
+    /story\s*point\s*estimate/i,
+  ]);
+}
 
-  const hit =
-    entries.find(([, name]) => matcher.test(name)) ||
-    entries.find(([, name]) => altMatcher.test(name));
+/**
+ * Sprint field discovery
+ * Finds the Sprint custom field across different JIRA configurations
+ */
+function findSprintFieldId(names = {}) {
+  return findFieldIdByName(names, [/^sprint$/i]);
+}
 
-  return hit ? hit[0] : null; // fieldId like "customfield_10016"
+/**
+ * Epic Link field discovery (legacy)
+ * Finds the Epic Link custom field for older JIRA configurations
+ */
+function findEpicLinkFieldId(names = {}) {
+  return findFieldIdByName(names, [/^epic\s*link$/i]);
 }
 
 /**
@@ -105,8 +126,12 @@ export async function fetchJiraTicketFull({ baseUrl, issueKey, auth }) {
     ).toString("base64")}`,
   };
 
-  // Ask only for the fields we need; add issuelinks explicitly and expand=names to resolve custom ids.
-  const fields = [
+  // Use *all fields to get comprehensive data including custom fields
+  // This ensures we get Sprint, Epic Link, and all time tracking fields
+  const useAllFields = true;
+
+  // Fallback specific fields if *all is not supported
+  const specificFields = [
     "summary",
     "status",
     "issuetype",
@@ -134,6 +159,13 @@ export async function fetchJiraTicketFull({ baseUrl, issueKey, auth }) {
     "progress",
     "versions",
     "environment",
+    // Enhanced time tracking fields
+    "timeoriginalestimate",
+    "timeestimate",
+    "timespent",
+    "aggregatetimeoriginalestimate",
+    "aggregatetimeestimate",
+    "aggregatetimespent",
   ];
 
   const url = `${baseUrl.replace(
@@ -143,12 +175,16 @@ export async function fetchJiraTicketFull({ baseUrl, issueKey, auth }) {
 
   try {
     console.log(`Making JIRA API call to: ${url}`);
-    console.log(`Fields requested: ${fields.join(", ")}`);
+    console.log(
+      `Fields requested: ${
+        useAllFields ? "*all fields" : specificFields.join(", ")
+      }`
+    );
 
     const { data } = await axios.get(url, {
       headers,
       params: {
-        fields: fields.join(","),
+        fields: useAllFields ? "*all" : specificFields.join(","),
         expand: "names", // For dynamic custom field discovery
       },
     });
@@ -165,10 +201,20 @@ export async function fetchJiraTicketFull({ baseUrl, issueKey, auth }) {
       namesCount: Object.keys(names).length,
     });
 
-    // Dynamic Story Points discovery
+    // Dynamic custom field discovery
     const storyPointsFieldId = findStoryPointsFieldId(names);
-    let storyPoints = null;
+    const sprintFieldId = findSprintFieldId(names);
+    const epicLinkFieldId = findEpicLinkFieldId(names);
 
+    console.log("Custom field discovery:", {
+      storyPointsFieldId,
+      sprintFieldId,
+      epicLinkFieldId,
+      totalFields: Object.keys(names).length,
+    });
+
+    // Story Points
+    let storyPoints = null;
     if (storyPointsFieldId && f.hasOwnProperty(storyPointsFieldId)) {
       const raw = f[storyPointsFieldId];
       storyPoints = typeof raw === "number" ? raw : raw ? Number(raw) : null;
@@ -177,6 +223,44 @@ export async function fetchJiraTicketFull({ baseUrl, issueKey, auth }) {
       );
     } else {
       console.log("Story Points field not found or not set");
+    }
+
+    // Sprints (custom field array of sprint objects)
+    let sprints = [];
+    if (sprintFieldId && Array.isArray(f[sprintFieldId])) {
+      sprints = (f[sprintFieldId] || []).map((sp) => ({
+        id: sp?.id ?? null,
+        name: sp?.name ?? null,
+        state: sp?.state ?? null, // 'future' | 'active' | 'closed'
+        boardId: sp?.originBoardId ?? sp?.boardId ?? null,
+        startDate: sp?.startDate ?? null,
+        endDate: sp?.endDate ?? null,
+        completeDate: sp?.completeDate ?? null,
+        goal: sp?.goal ?? null,
+      }));
+      console.log(`Found ${sprints.length} sprints for ticket`);
+    } else {
+      console.log("Sprint field not found or empty");
+    }
+    const activeSprint = sprints.find((sp) => sp.state === "active") || null;
+
+    // Epic detection (newer "parent" concept; else legacy Epic Link custom field)
+    let epicKey = null;
+    let epicSource = null;
+    // Prefer parent if it's an Epic
+    const parentType =
+      f.parent?.fields?.issuetype?.name || f.parent?.issuetype?.name;
+    if (f.parent?.key && /epic/i.test(parentType || "")) {
+      epicKey = f.parent.key;
+      epicSource = "parent";
+      console.log(`Epic found via parent: ${epicKey}`);
+    } else if (epicLinkFieldId && f[epicLinkFieldId]) {
+      const val = f[epicLinkFieldId];
+      epicKey = typeof val === "string" ? val : val?.key || null;
+      epicSource = "epicLink";
+      console.log(`Epic found via Epic Link: ${epicKey}`);
+    } else {
+      console.log("No Epic relationship found");
     }
 
     // Handle ADF description format (Cloud) vs HTML (Server)
@@ -293,23 +377,37 @@ export async function fetchJiraTicketFull({ baseUrl, issueKey, auth }) {
       labels: f.labels || [],
       environment: f.environment || null,
 
-      // Story points (dynamically discovered)
+      // Agile fields (dynamically discovered)
       storyPoints,
       storyPointsFieldId, // For caching per project
 
-      // Time tracking
-      timeTracking: f.timetracking
-        ? {
-            originalEstimate: f.timetracking.originalEstimate || null,
-            remainingEstimate: f.timetracking.remainingEstimate || null,
-            timeSpent: f.timetracking.timeSpent || null,
-            originalEstimateSeconds:
-              f.timetracking.originalEstimateSeconds || null,
-            remainingEstimateSeconds:
-              f.timetracking.remainingEstimateSeconds || null,
-            timeSpentSeconds: f.timetracking.timeSpentSeconds || null,
-          }
-        : null,
+      // Sprint information
+      sprintFieldId,
+      sprints,
+      activeSprint,
+
+      // Epic relationship
+      epic: epicKey ? { key: epicKey, source: epicSource } : null,
+
+      // Enhanced time tracking (pretty strings + numeric seconds + aggregates)
+      timeTracking: {
+        // Pretty formatted strings from timetracking object
+        originalEstimate: f.timetracking?.originalEstimate ?? null,
+        remainingEstimate: f.timetracking?.remainingEstimate ?? null,
+        timeSpent: f.timetracking?.timeSpent ?? null,
+
+        // Raw seconds from direct fields
+        originalEstimateSeconds: f.timeoriginalestimate ?? null,
+        remainingEstimateSeconds: f.timeestimate ?? null,
+        timeSpentSeconds: f.timespent ?? null,
+
+        // Aggregate time tracking (includes subtasks)
+        aggregate: {
+          originalEstimateSeconds: f.aggregatetimeoriginalestimate ?? null,
+          remainingEstimateSeconds: f.aggregatetimeestimate ?? null,
+          timeSpentSeconds: f.aggregatetimespent ?? null,
+        },
+      },
 
       // Security level
       security: f.security
@@ -432,4 +530,11 @@ export async function fetchJiraTicketFull({ baseUrl, issueKey, auth }) {
   }
 }
 
-export { adfToText, findStoryPointsFieldId, mapIssueLinks };
+export {
+  adfToText,
+  findFieldIdByName,
+  findStoryPointsFieldId,
+  findSprintFieldId,
+  findEpicLinkFieldId,
+  mapIssueLinks,
+};

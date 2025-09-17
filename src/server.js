@@ -15,6 +15,12 @@ import express from "express";
 import cors from "cors";
 import { PerplexityTool } from "./tools/perplexity.js";
 import { fetchJiraTicketFull } from "./jira-client.js";
+import {
+  searchProjects,
+  searchBoardsFull,
+  searchProjectsWithBoards,
+} from "./jira-project-board.js";
+import { fetchProjectTree3Levels } from "./utils/jira-project-tree.js";
 
 // Load environment variables
 dotenv.config();
@@ -111,6 +117,143 @@ class LocalMCPServer {
           },
         },
         this.perplexityTool.getToolDefinition(),
+        {
+          name: "search_jira_projects",
+          description:
+            "Search JIRA projects with optional filters (query, status, categoryId)",
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "Search term to match project names or keys",
+              },
+              status: {
+                type: "string",
+                enum: ["live", "archived", "deleted"],
+                description: "Filter by project status",
+              },
+              categoryId: {
+                type: "string",
+                description: "Filter by project category ID",
+              },
+              maxResults: {
+                type: "number",
+                default: 50,
+                minimum: 1,
+                maximum: 100,
+                description: "Maximum number of results to return",
+              },
+            },
+          },
+        },
+        {
+          name: "search_jira_boards",
+          description:
+            "Search JIRA boards with configuration, active sprints, and associated projects",
+          inputSchema: {
+            type: "object",
+            properties: {
+              name: {
+                type: "string",
+                description: "Board name to search for",
+              },
+              type: {
+                type: "string",
+                enum: ["scrum", "kanban"],
+                description: "Board type filter",
+              },
+              projectKeyOrId: {
+                type: "string",
+                description:
+                  "Filter boards by project key (e.g., 'PROJ') or ID",
+              },
+              maxResults: {
+                type: "number",
+                default: 50,
+                minimum: 1,
+                maximum: 100,
+                description: "Maximum number of results to return",
+              },
+              includeConfig: {
+                type: "boolean",
+                default: true,
+                description:
+                  "Include board configuration (columns, estimation, etc.)",
+              },
+              includeActiveSprints: {
+                type: "boolean",
+                default: true,
+                description: "Include active sprint information",
+              },
+              includeProjects: {
+                type: "boolean",
+                default: true,
+                description: "Include projects associated with the board",
+              },
+            },
+          },
+        },
+        {
+          name: "search_projects_with_boards",
+          description:
+            "Combined search: find projects and their associated boards in one operation",
+          inputSchema: {
+            type: "object",
+            properties: {
+              projectQuery: {
+                type: "string",
+                description: "Search term for projects",
+              },
+              projectStatus: {
+                type: "string",
+                enum: ["live", "archived", "deleted"],
+                description: "Filter projects by status",
+              },
+              projectCategoryId: {
+                type: "string",
+                description: "Filter projects by category ID",
+              },
+              boardType: {
+                type: "string",
+                enum: ["scrum", "kanban"],
+                description: "Filter boards by type",
+              },
+              includeConfig: {
+                type: "boolean",
+                default: true,
+                description: "Include board configurations",
+              },
+              includeActiveSprints: {
+                type: "boolean",
+                default: true,
+                description: "Include active sprint information",
+              },
+            },
+          },
+        },
+        {
+          name: "fetch_jira_project_tree",
+          description:
+            "Fetch complete 3-level JIRA project tree: Project → Epics → Issues → Subtasks",
+          inputSchema: {
+            type: "object",
+            properties: {
+              projectKeyOrId: {
+                type: "string",
+                description: "Project key (e.g., 'WEB') or project ID",
+              },
+              pageSize: {
+                type: "number",
+                description: "Items per page (default: 100)",
+                default: 100,
+                minimum: 1,
+                maximum: 500,
+              },
+            },
+            required: ["projectKeyOrId"],
+          },
+        },
       ],
     };
   }
@@ -146,6 +289,14 @@ class LocalMCPServer {
           return this.handleFetchJiraTicket(args);
         case "fetch_perplexity_data":
           return this.perplexityTool.execute(args, _auth);
+        case "search_jira_projects":
+          return this.handleSearchJiraProjects(args);
+        case "search_jira_boards":
+          return this.handleSearchJiraBoards(args);
+        case "search_projects_with_boards":
+          return this.handleSearchProjectsWithBoards(args);
+        case "fetch_jira_project_tree":
+          return this.handleFetchJiraProjectTree(args);
         default:
           throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
       }
@@ -243,6 +394,418 @@ class LocalMCPServer {
     }
   }
 
+  async handleSearchJiraProjects(args) {
+    const { query, status, categoryId, maxResults = 50 } = args || {};
+
+    console.log(
+      `Searching JIRA projects with query: "${query}", status: ${status}`
+    );
+
+    try {
+      const projects = await searchProjects({
+        baseUrl: JIRA_CONFIG.baseUrl,
+        auth: {
+          email: JIRA_CONFIG.email,
+          apiToken: JIRA_CONFIG.apiToken,
+        },
+        query,
+        status,
+        categoryId,
+        maxResults,
+      });
+
+      console.log(`Found ${projects.length} projects`);
+
+      const responseText = this.formatProjectsResponse(projects, {
+        query,
+        status,
+        categoryId,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: responseText,
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("Project search error:", error.message);
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to search projects: ${error.message}`
+      );
+    }
+  }
+
+  async handleSearchJiraBoards(args) {
+    const {
+      name,
+      type,
+      projectKeyOrId,
+      maxResults = 50,
+      includeConfig = true,
+      includeActiveSprints = true,
+      includeProjects = true,
+    } = args || {};
+
+    console.log(
+      `Searching JIRA boards with name: "${name}", type: ${type}, project: ${projectKeyOrId}`
+    );
+
+    try {
+      const boards = await searchBoardsFull({
+        baseUrl: JIRA_CONFIG.baseUrl,
+        auth: {
+          email: JIRA_CONFIG.email,
+          apiToken: JIRA_CONFIG.apiToken,
+        },
+        name,
+        type,
+        projectKeyOrId,
+        maxResults,
+        includeConfig,
+        includeActiveSprints,
+        includeProjects,
+      });
+
+      console.log(`Found ${boards.length} boards`);
+
+      const responseText = this.formatBoardsResponse(boards, {
+        name,
+        type,
+        projectKeyOrId,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: responseText,
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("Board search error:", error.message);
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to search boards: ${error.message}`
+      );
+    }
+  }
+
+  async handleSearchProjectsWithBoards(args) {
+    const {
+      projectQuery,
+      projectStatus,
+      projectCategoryId,
+      boardType,
+      includeConfig = true,
+      includeActiveSprints = true,
+    } = args || {};
+
+    console.log(
+      `Searching projects with boards - project query: "${projectQuery}", board type: ${boardType}`
+    );
+
+    try {
+      const projectsWithBoards = await searchProjectsWithBoards({
+        baseUrl: JIRA_CONFIG.baseUrl,
+        auth: {
+          email: JIRA_CONFIG.email,
+          apiToken: JIRA_CONFIG.apiToken,
+        },
+        projectQuery,
+        projectStatus,
+        projectCategoryId,
+        boardType,
+        includeConfig,
+        includeActiveSprints,
+      });
+
+      console.log(`Found ${projectsWithBoards.length} projects with boards`);
+
+      const responseText = this.formatProjectsWithBoardsResponse(
+        projectsWithBoards,
+        {
+          projectQuery,
+          projectStatus,
+          boardType,
+        }
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: responseText,
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("Projects with boards search error:", error.message);
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to search projects with boards: ${error.message}`
+      );
+    }
+  }
+
+  async handleFetchJiraProjectTree(args) {
+    const { projectKeyOrId, pageSize = 100 } = args || {};
+
+    if (!projectKeyOrId || typeof projectKeyOrId !== "string") {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        "Project key or ID is required and must be a string"
+      );
+    }
+
+    console.log(`Fetching JIRA project tree for: ${projectKeyOrId}`);
+
+    try {
+      const projectTree = await fetchProjectTree3Levels({
+        baseUrl: JIRA_CONFIG.baseUrl,
+        auth: {
+          email: JIRA_CONFIG.email,
+          apiToken: JIRA_CONFIG.apiToken,
+        },
+        projectKeyOrId,
+        pageSize,
+      });
+
+      console.log(`Successfully fetched project tree for: ${projectKeyOrId}`);
+      console.log(
+        `Stats: ${projectTree.stats.epics} epics, ${projectTree.stats.children} issues, ${projectTree.stats.subtasks} subtasks`
+      );
+
+      // Format the response for better readability
+      const responseText = this.formatProjectTreeResponse(projectTree);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: responseText,
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("Project tree fetch error:", error.message);
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to fetch project tree: ${error.message}`
+      );
+    }
+  }
+
+  formatProjectTreeResponse(projectTree) {
+    let response = `JIRA Project Tree: ${projectTree.project}
+═══════════════════════════════════════════════════════════════
+
+PROJECT STATISTICS:
+• Levels: ${projectTree.levels}
+• Epics: ${projectTree.stats.epics}
+• Issues: ${projectTree.stats.children}
+• Subtasks: ${projectTree.stats.subtasks}
+
+EPIC BREAKDOWN:
+───────────────────────────────────────────────────────────────`;
+
+    if (projectTree.epics.length === 0) {
+      response += `\n\nNo epics found in project ${projectTree.project}.`;
+      return response;
+    }
+
+    projectTree.epics.forEach((epic, index) => {
+      const childCount = epic.children?.length || 0;
+      const subtaskCount =
+        epic.children?.reduce(
+          (sum, child) => sum + (child.subtasks?.length || 0),
+          0
+        ) || 0;
+
+      response += `\n\n${index + 1}. EPIC: ${epic.key} - ${epic.summary}
+   • Status: ${epic.status || "Unknown"}
+   • Priority: ${epic.priority || "Normal"}
+   • Assignee: ${epic.assignee || "Unassigned"}`;
+
+      if (epic.storyPoints) {
+        response += `\n   • Story Points: ${epic.storyPoints}`;
+      }
+
+      response += `\n   • Child Issues: ${childCount}
+   • Subtasks: ${subtaskCount}`;
+
+      if (epic.children && epic.children.length > 0) {
+        response += `\n\n   CHILD ISSUES:`;
+        epic.children.forEach((child, childIndex) => {
+          response += `\n   ${childIndex + 1}. ${child.key} - ${child.summary}
+      • Type: ${child.issuetype || "Unknown"}
+      • Status: ${child.status || "Unknown"}
+      • Assignee: ${child.assignee || "Unassigned"}`;
+
+          if (child.storyPoints) {
+            response += `\n      • Story Points: ${child.storyPoints}`;
+          }
+
+          if (child.subtasks && child.subtasks.length > 0) {
+            response += `\n      • Subtasks: ${child.subtasks.length}`;
+            child.subtasks.forEach((subtask, subtaskIndex) => {
+              response += `\n        ${subtaskIndex + 1}. ${subtask.key} - ${
+                subtask.summary
+              } (${subtask.status || "Unknown"})`;
+            });
+          }
+        });
+      }
+    });
+
+    return response;
+  }
+
+  formatProjectsResponse(projects, searchParams) {
+    let response = `JIRA Projects Search Results
+═══════════════════════════════════════════════════════════════
+
+SEARCH PARAMETERS:`;
+    if (searchParams.query) response += `\n• Query: "${searchParams.query}"`;
+    if (searchParams.status) response += `\n• Status: ${searchParams.status}`;
+    if (searchParams.categoryId)
+      response += `\n• Category ID: ${searchParams.categoryId}`;
+
+    response += `\n\nFOUND ${projects.length} PROJECTS:
+───────────────────────────────────────────────────────────────`;
+
+    projects.forEach((project, index) => {
+      response += `\n\n${index + 1}. ${project.name} (${project.key})
+   • ID: ${project.id}
+   • Type: ${project.projectTypeKey || "Unknown"}
+   • Style: ${project.style || "Unknown"}`;
+
+      if (project.simplified !== null) {
+        response += `\n   • Simplified: ${project.simplified}`;
+      }
+
+      if (project.category) {
+        response += `\n   • Category: ${project.category.name} (${project.category.id})`;
+      }
+
+      response += `\n   • Avatar: ${
+        Object.keys(project.avatarUrls).length > 0 ? "Available" : "None"
+      }`;
+    });
+
+    return response;
+  }
+
+  formatBoardsResponse(boards, searchParams) {
+    let response = `JIRA Boards Search Results
+═══════════════════════════════════════════════════════════════
+
+SEARCH PARAMETERS:`;
+    if (searchParams.name) response += `\n• Name: "${searchParams.name}"`;
+    if (searchParams.type) response += `\n• Type: ${searchParams.type}`;
+    if (searchParams.projectKeyOrId)
+      response += `\n• Project: ${searchParams.projectKeyOrId}`;
+
+    response += `\n\nFOUND ${boards.length} BOARDS:
+───────────────────────────────────────────────────────────────`;
+
+    boards.forEach((board, index) => {
+      response += `\n\n${index + 1}. ${board.name} (ID: ${board.id})
+   • Type: ${board.type}`;
+
+      if (board.location) {
+        response += `\n   • Location: ${board.location.name} (${board.location.projectKey})`;
+      }
+
+      if (board.config) {
+        response += `\n   • Configuration:
+     - Filter ID: ${board.config.filterId}
+     - Columns: ${board.config.columns.length}`;
+
+        if (board.config.estimation) {
+          response += `\n     - Estimation Field: ${board.config.estimation.displayName}`;
+        }
+
+        if (board.config.rankingFieldId) {
+          response += `\n     - Ranking Field: ${board.config.rankingFieldId}`;
+        }
+      }
+
+      if (board.activeSprints && board.activeSprints.length > 0) {
+        response += `\n   • Active Sprints: ${board.activeSprints.length}`;
+        board.activeSprints.forEach((sprint) => {
+          response += `\n     - ${sprint.name} (${sprint.id})`;
+          if (sprint.goal) response += `\n       Goal: ${sprint.goal}`;
+          if (sprint.startDate && sprint.endDate) {
+            response += `\n       Duration: ${new Date(
+              sprint.startDate
+            ).toLocaleDateString()} - ${new Date(
+              sprint.endDate
+            ).toLocaleDateString()}`;
+          }
+        });
+      }
+
+      if (board.projects && board.projects.length > 0) {
+        response += `\n   • Associated Projects: ${board.projects.length}`;
+        board.projects.forEach((project) => {
+          response += `\n     - ${project.name} (${project.key})`;
+        });
+      }
+    });
+
+    return response;
+  }
+
+  formatProjectsWithBoardsResponse(projectsWithBoards, searchParams) {
+    let response = `JIRA Projects with Boards Search Results
+═══════════════════════════════════════════════════════════════
+
+SEARCH PARAMETERS:`;
+    if (searchParams.projectQuery)
+      response += `\n• Project Query: "${searchParams.projectQuery}"`;
+    if (searchParams.projectStatus)
+      response += `\n• Project Status: ${searchParams.projectStatus}`;
+    if (searchParams.boardType)
+      response += `\n• Board Type: ${searchParams.boardType}`;
+
+    response += `\n\nFOUND ${projectsWithBoards.length} PROJECTS WITH BOARDS:
+───────────────────────────────────────────────────────────────`;
+
+    projectsWithBoards.forEach((item, index) => {
+      const { project, boards } = item;
+      response += `\n\n${index + 1}. PROJECT: ${project.name} (${project.key})
+   • ID: ${project.id}
+   • Type: ${project.projectTypeKey || "Unknown"}`;
+
+      if (project.category) {
+        response += `\n   • Category: ${project.category.name}`;
+      }
+
+      response += `\n   • Boards: ${boards.length}`;
+
+      boards.forEach((board, boardIndex) => {
+        response += `\n\n     ${boardIndex + 1}. ${board.name} (${board.type})`;
+
+        if (board.activeSprints && board.activeSprints.length > 0) {
+          response += `\n        • Active Sprints: ${board.activeSprints
+            .map((s) => s.name)
+            .join(", ")}`;
+        }
+
+        if (board.config && board.config.columns) {
+          response += `\n        • Columns: ${board.config.columns.length} configured`;
+        }
+      });
+    });
+
+    return response;
+  }
+
   formatJiraTicketResponse(info) {
     let response = `JIRA Ticket: ${info.key}
 ═══════════════════════════════════════════════════════════════
@@ -329,18 +892,94 @@ ${info.labels.join(", ")}`;
       });
     }
 
-    if (info.timeTracking) {
+    // Enhanced time tracking
+    if (
+      info.timeTracking &&
+      (info.timeTracking.originalEstimate ||
+        info.timeTracking.timeSpent ||
+        info.timeTracking.remainingEstimate)
+    ) {
       response += `\n\nTIME TRACKING:`;
+
+      // Pretty formatted times
       if (info.timeTracking.originalEstimate)
         response += `\n• Original Estimate: ${info.timeTracking.originalEstimate}`;
       if (info.timeTracking.remainingEstimate)
         response += `\n• Remaining: ${info.timeTracking.remainingEstimate}`;
       if (info.timeTracking.timeSpent)
         response += `\n• Time Spent: ${info.timeTracking.timeSpent}`;
+
+      // Raw seconds for precise calculations
+      const hasRawTimes =
+        info.timeTracking.originalEstimateSeconds ||
+        info.timeTracking.remainingEstimateSeconds ||
+        info.timeTracking.timeSpentSeconds;
+      if (hasRawTimes) {
+        response += `\n• Raw Seconds: `;
+        if (info.timeTracking.originalEstimateSeconds)
+          response += `Estimate=${info.timeTracking.originalEstimateSeconds}s `;
+        if (info.timeTracking.timeSpentSeconds)
+          response += `Spent=${info.timeTracking.timeSpentSeconds}s `;
+        if (info.timeTracking.remainingEstimateSeconds)
+          response += `Remaining=${info.timeTracking.remainingEstimateSeconds}s`;
+      }
+
+      // Aggregate times (includes subtasks)
+      const hasAggregate =
+        info.timeTracking.aggregate?.originalEstimateSeconds ||
+        info.timeTracking.aggregate?.timeSpentSeconds ||
+        info.timeTracking.aggregate?.remainingEstimateSeconds;
+      if (hasAggregate) {
+        response += `\n• With Subtasks: `;
+        if (info.timeTracking.aggregate.originalEstimateSeconds)
+          response += `Estimate=${info.timeTracking.aggregate.originalEstimateSeconds}s `;
+        if (info.timeTracking.aggregate.timeSpentSeconds)
+          response += `Spent=${info.timeTracking.aggregate.timeSpentSeconds}s `;
+        if (info.timeTracking.aggregate.remainingEstimateSeconds)
+          response += `Remaining=${info.timeTracking.aggregate.remainingEstimateSeconds}s`;
+      }
     }
 
+    // Agile information
     if (info.storyPoints) {
       response += `\n\nSTORY POINTS: ${info.storyPoints}`;
+    }
+
+    // Sprint information
+    if (info.activeSprint) {
+      response += `\n\nACTIVE SPRINT:
+• Name: ${info.activeSprint.name}
+• State: ${info.activeSprint.state}`;
+      if (info.activeSprint.startDate) {
+        response += `\n• Start: ${new Date(
+          info.activeSprint.startDate
+        ).toLocaleDateString()}`;
+      }
+      if (info.activeSprint.endDate) {
+        response += `\n• End: ${new Date(
+          info.activeSprint.endDate
+        ).toLocaleDateString()}`;
+      }
+      if (info.activeSprint.goal) {
+        response += `\n• Goal: ${info.activeSprint.goal}`;
+      }
+    }
+
+    // All sprints summary
+    if (info.sprints && info.sprints.length > 0) {
+      const sprintCounts = info.sprints.reduce((acc, sprint) => {
+        acc[sprint.state] = (acc[sprint.state] || 0) + 1;
+        return acc;
+      }, {});
+      const sprintSummary = Object.entries(sprintCounts)
+        .map(([state, count]) => `${count} ${state}`)
+        .join(", ");
+      response += `\n\nSPRINT HISTORY: ${info.sprints.length} total (${sprintSummary})`;
+    }
+
+    // Epic information
+    if (info.epic) {
+      response += `\n\nEPIC: ${info.epic.key} (via ${info.epic.source})`;
     }
 
     response += `\n\nACTIVITY:
