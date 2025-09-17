@@ -417,7 +417,7 @@ ${info.labels.join(", ")}`;
             break;
           case "resources/read":
           case "readResource":
-            result = await this.handleReadResource({ params: params });
+            result = await this.handleReadResource({ params });
             break;
           default:
             return res.status(400).json({
