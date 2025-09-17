@@ -1,555 +1,331 @@
-# Barebone MCP Server
+# Hello World MCP Server
+
+A production-ready Model Context Protocol (MCP) server that provides LLM-free data backbone services with robust JIRA integration and multi-transport support.
 
 ## Overview
 
-A production-ready Model Context Protocol (MCP) server with STDIO-first architecture and HTTP bridge. Implements Jira integration, Perplexity AI search, and utility tools for LLM workflows.
+This MCP server is designed as a **pure data backbone** for AI applications, providing structured data access without any LLM processing. It's perfect for Third Lane architectures where you want clean separation between data fetching (MCP) and AI processing (separate services).
 
-## Tech Stack
+## Features
 
-- **Node.js** (v18+)
-- **MCP SDK** (@modelcontextprotocol/sdk)
-- **Axios** for HTTP requests
-- **dotenv** for environment variables
-- **JIRA REST API v3**
-- **Perplexity AI API**
+### 🎯 Core Capabilities
+
+- **JIRA Integration**: Comprehensive ticket fetching with dynamic field discovery
+- **Dual Transport**: Both stdio and HTTP JSON-RPC endpoints
+- **Perplexity Integration**: External AI service connectivity
+- **Zero LLM Processing**: Pure data operations only
+
+### 🔧 JIRA Features
+
+- **Enhanced Ticket Fetching**: Single API call gets complete ticket data
+- **Dynamic Story Points Discovery**: Automatically finds custom field IDs
+- **ADF Description Parsing**: Handles both Cloud (ADF) and Server (HTML) formats
+- **Safe Property Access**: Null-safe field access prevents crashes
+- **Comprehensive Error Handling**: Specific error messages for auth, permissions, not found
+- **Lane B Compatibility**: Supports both `fetch_jira_ticket` and `fetch_ticket` tool names
+
+### 🌐 Transport Options
+
+- **Stdio Transport**: Standard MCP protocol for direct LLM integration
+- **HTTP Transport**: JSON-RPC endpoint for web applications and external services
+- **CORS Support**: Configured for localhost development
 
 ## Architecture
 
 ```
-STDIO MCP Core (src/stdio.js)
-    ↑
-HTTP Bridge (src/http-bridge.js)
-    ↑
-External Clients (clone-gpt, etc.)
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   AI/LLM        │    │   MCP Server     │    │   JIRA API      │
+│   (Lane C)      │◄──►│   (Lane B)       │◄──►│   (Data Source) │
+│                 │    │                  │    │                 │
+│ • Analysis      │    │ • Pure Data      │    │ • Tickets       │
+│ • Insights      │    │ • No LLM         │    │ • Projects      │
+│ • Recommendations │    │ • HTTP/stdio     │    │ • Users         │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
 ```
-
-- **STDIO Core**: Pure MCP server implementation using `@modelcontextprotocol/sdk`
-- **HTTP Bridge**: Spawns STDIO process and exposes JSON-RPC over HTTP
-- **Dual Transport**: Supports both STDIO (for editors) and HTTP (for web apps)
-
-## Tools
-
-### Core Tools
-
-- `add_numbers`: Add multiple numbers together (demo tool)
-
-### Jira Tools
-
-- `jira_whoami`: Get current Jira user information
-- `fetch_jira_ticket`: Fetch Jira ticket by key (e.g., PROJ-123)
-- `fetch_jira_projects`: List accessible Jira projects
-- `fetch_current_sprint`: Get current sprint for a project
-
-### Perplexity Tools
-
-- `fetch_perplexity_data`: Search using Perplexity AI with caching and history
-
-## Resources
-
-### Search History
-
-- `search://history/`: All Perplexity search results
-- `search://history/recent/N`: Last N searches
-- `search://history/since/TIMESTAMP`: Searches since timestamp
-- `search://history/query/TERM`: Searches containing term
-- `search://history/full/ID`: Full search data by ID
 
 ## Installation
 
 ```bash
+# Clone the repository
+git clone <repository-url>
+cd hello-world-mcp
+
+# Install dependencies
 npm install
+
+# Copy environment template
+cp env.example .env
+
+# Configure your JIRA credentials
+nano .env
 ```
 
 ## Configuration
 
-Create `.env` file (see `env.example`):
-
-### Jira - Basic Auth (fallback)
+### Environment Variables
 
 ```bash
-JIRA_BASE_URL=https://your-instance.atlassian.net
+# JIRA Configuration
+JIRA_BASE_URL=https://your-domain.atlassian.net
 JIRA_EMAIL=your-email@domain.com
-JIRA_API_TOKEN=your_jira_api_token
-```
+JIRA_API_TOKEN=your-api-token
 
-### Jira - OAuth 2.0 (preferred)
-
-```bash
-JIRA_OAUTH_CLIENT_ID=your_oauth_client_id
-JIRA_OAUTH_CLIENT_SECRET=your_oauth_client_secret
-JIRA_OAUTH_AUDIENCE=api.atlassian.com
-JIRA_CLOUD_ID=your_cloud_id_uuid
-```
-
-### Perplexity
-
-```bash
-PERPLEXITY_API_KEY=pplx-your-key-here
-PERPLEXITY_API_BASE=https://api.perplexity.ai
-```
-
-### HTTP Bridge
-
-```bash
+# HTTP Transport (optional)
 MCP_HTTP_PORT=4000
-MCP_HTTP_TOKEN=optional_bearer_token
+MCP_HTTP_TOKEN=optional-auth-token
+
+# Perplexity Integration (optional)
+PERPLEXITY_API_KEY=your-perplexity-key
 ```
+
+### JIRA Setup
+
+1. Go to [Atlassian Account Settings](https://id.atlassian.com/manage-profile/security/api-tokens)
+2. Create an API token
+3. Use your email and token in the environment variables
 
 ## Usage
 
-### Quick Start for Production Teams
-
-1. **Install dependencies:**
-
-   ```bash
-   npm install
-   ```
-
-2. **Configure environment (copy `env.example` to `.env`):**
-
-   ```bash
-   cp env.example .env
-   # Edit .env with your Jira/Perplexity credentials
-   ```
-
-3. **Start the MCP server:**
-
-   ```bash
-   npm run http
-   ```
-
-4. **Verify it's working:**
-   ```bash
-   # Run comprehensive test suite
-   ./test-mcp-server.ps1
-   # or
-   ./test-mcp-server.sh
-   ```
-
-### STDIO Mode (Primary)
-
-For MCP-aware editors and direct integration:
+### Start the Server
 
 ```bash
-# Start STDIO server (for standalone use)
-MCP_STANDALONE=1 npm run stdio
+# Stdio transport only
+node src/server.js
 
-# Or with watch mode
-MCP_STANDALONE=1 npm run dev:stdio
+# With HTTP transport
+MCP_HTTP_PORT=4000 node src/server.js
+
+# Background with logging
+npm run dev:logs
 ```
 
-Configure MCP clients to spawn: `node src/stdio.js`
-
-### HTTP Bridge Mode (Recommended for Teams)
-
-For web applications and HTTP clients:
-
-```bash
-# Start HTTP bridge (spawns STDIO child automatically)
-npm run http
-
-# Or with watch mode
-npm run dev:http
-```
-
-The bridge runs on `http://127.0.0.1:4000` by default and provides:
-
-- **JSON-RPC 2.0 compliance**
-- **Automatic MCP initialization**
-- **Method name normalization** (`listTools` → `tools/list`)
-- **Health monitoring** (`/health` endpoint)
-- **Auto-restart** on child process failure
-
-## API Examples
-
-### List Tools
-
-```bash
-curl -X POST http://127.0.0.1:4000/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"listTools","id":1}'
-```
-
-### Call Jira Tool
-
-```bash
-curl -X POST http://127.0.0.1:4000/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"callTool","params":{"name":"jira_whoami","arguments":{}},"id":2}'
-```
-
-### Fetch Jira Ticket
-
-```bash
-curl -X POST http://127.0.0.1:4000/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"callTool","params":{"name":"fetch_jira_ticket","arguments":{"ticketKey":"PROJ-123"}},"id":3}'
-```
-
-### Perplexity Search
-
-```bash
-curl -X POST http://127.0.0.1:4000/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"callTool","params":{"name":"fetch_perplexity_data","arguments":{"query":"Latest in local LLM optimization","recency":"week"}},"id":4}'
-```
-
-### Read Search History
-
-```bash
-curl -X POST http://127.0.0.1:4000/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"readResource","params":{"uri":"search://history/recent/5"},"id":5}'
-```
-
-## Integration with clone-gpt
-
-Configure `clone-gpt/.env`:
-
-```bash
-MCP_FORWARD_ONLY=1
-MCP_BASE_URL=http://127.0.0.1:4000
-```
-
-Start sequence:
-
-1. Start this MCP server: `npm run http`
-2. Start clone-gpt: `pnpm dev`
-3. Test via clone-gpt API: `http://localhost:8080/api/mcp/tools`
-
-## Security
-
-### HTTP Bridge Security
-
-- **Localhost binding**: Only `127.0.0.1` by default
-- **Bearer auth**: Optional via `MCP_HTTP_TOKEN`
-- **CORS**: Restricted to localhost origins
-- **Process isolation**: STDIO child runs in separate process
-
-### Jira Authentication
-
-- **OAuth 2.0**: Preferred method with proper scopes
-- **Basic Auth**: Fallback for development
-- **Token management**: Automatic refresh with 1-minute buffer
-
-### Perplexity
-
-- **API key**: Stored in environment, not exposed
-- **Rate limiting**: Cached responses with TTL
-- **Data isolation**: Search history stored in memory only
-
-## Error Handling
-
-### HTTP Bridge
-
-- Auto-restart STDIO child on crash (max 5 attempts)
-- Exponential backoff on restart failures
-- Request timeout (60 seconds)
-- Graceful error responses in JSON-RPC format
-
-### Jira Integration
-
-- OAuth token refresh on expiration
-- Fallback to Basic Auth if OAuth fails
-- Detailed error messages with HTTP status codes
-- Input validation for ticket keys and parameters
-
-## Development
-
-```bash
-# STDIO development
-npm run dev:stdio
-
-# HTTP bridge development
-npm run dev:http
-
-# Legacy combined mode
-npm run dev
-```
-
-## Scripts
-
-- `npm run stdio`: Start STDIO server
-- `npm run dev:stdio`: STDIO server with watch mode
-- `npm run http`: Start HTTP bridge
-- `npm run dev:http`: HTTP bridge with watch mode
-- `npm start`: Legacy combined mode
-- `npm run dev`: Legacy combined mode with watch
-
-## Logging
-
-The server logs to stderr:
-
-- `[MCP]`: STDIO server messages
-- `[BRIDGE]`: HTTP bridge messages
-- Tool execution logs with timing
-- Error details with context
-
-## Files Structure
-
-```
-src/
-├── stdio.js          # Pure STDIO MCP server
-├── http-bridge.js     # HTTP JSON-RPC bridge
-└── server.js          # Legacy combined mode
-```
-
-## Troubleshooting
-
-### STDIO Issues
-
-- Check Node.js version (18+ required)
-- Verify environment variables are set
-- Check stderr for MCP server logs
-
-### HTTP Bridge Issues
-
-- Ensure port 4000 is free
-- Check STDIO child process is spawning
-- Verify JSON-RPC request format
-
-### Jira Issues
-
-- Test OAuth credentials manually
-- Check JIRA_CLOUD_ID is correct UUID
-- Verify API token hasn't expired
-- Ensure proper scopes are configured
-
-### Perplexity Issues
-
-- Verify API key is valid
-- Check rate limits haven't been exceeded
-- Test API endpoint manually
-
-## Production Deployment
-
-### Docker Deployment (Recommended)
-
-Create `Dockerfile`:
-
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm install --only=production
-COPY src/ ./src/
-COPY env.example ./
-EXPOSE 4000
-CMD ["npm", "run", "http"]
-```
-
-Build and run:
-
-```bash
-docker build -t mcp-server .
-docker run -p 4000:4000 --env-file .env mcp-server
-```
-
-### Environment Variables for Production
-
-```bash
-# Required for HTTP mode
-MCP_HTTP_PORT=4000
-
-# Security (recommended for production)
-MCP_HTTP_TOKEN=your_secure_bearer_token
-
-# Jira Integration
-JIRA_OAUTH_CLIENT_ID=your_oauth_client_id
-JIRA_OAUTH_CLIENT_SECRET=your_oauth_client_secret
-JIRA_CLOUD_ID=your_cloud_id_uuid
-
-# Perplexity Integration
-PERPLEXITY_API_KEY=pplx-your-key-here
-
-# Optional
-NODE_ENV=production
-LOG_LEVEL=info
-```
-
-### Load Balancing & High Availability
-
-For production workloads:
-
-1. **Multiple instances** behind a load balancer
-2. **Health checks** on `/health` endpoint
-3. **Monitoring** via logs and metrics
-4. **Process management** (PM2, systemd, or container orchestrator)
-
-Example with PM2:
-
-```bash
-npm install -g pm2
-pm2 start src/http-bridge.js --name mcp-server --instances 2
-pm2 save
-pm2 startup
-```
-
-## Team Integration Guide
-
-### For Frontend Teams
-
-Integrate the MCP server into your web application:
-
-```typescript
-// MCP Client Example
-class MCPClient {
-  constructor(private baseUrl: string, private token?: string) {}
-
-  async listTools() {
-    const response = await fetch(`${this.baseUrl}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(this.token && { Authorization: `Bearer ${this.token}` }),
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "listTools",
-        id: Date.now(),
-      }),
-    });
-
-    const result = await response.json();
-    return result.result.tools;
-  }
-
-  async callTool(name: string, args: Record<string, any>) {
-    const response = await fetch(`${this.baseUrl}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(this.token && { Authorization: `Bearer ${this.token}` }),
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "callTool",
-        params: { name, arguments: args },
-        id: Date.now(),
-      }),
-    });
-
-    const result = await response.json();
-    if (result.error) throw new Error(result.error.message);
-    return result.result;
+### Available Tools
+
+#### 1. JIRA Ticket Fetching
+
+```javascript
+// Tool call
+{
+  "name": "fetch_ticket",
+  "arguments": {
+    "ticketKey": "PROJ-123"
   }
 }
-
-// Usage
-const mcp = new MCPClient("http://localhost:4000", "your_token");
-const tools = await mcp.listTools();
-const result = await mcp.callTool("add_numbers", { numbers: [1, 2, 3] });
 ```
 
-### For Backend Teams
+#### 2. Perplexity Search
 
-Use as a microservice:
-
-```python
-# Python client example
-import requests
-import json
-
-class MCPClient:
-    def __init__(self, base_url, token=None):
-        self.base_url = base_url
-        self.headers = {
-            'Content-Type': 'application/json'
-        }
-        if token:
-            self.headers['Authorization'] = f'Bearer {token}'
-
-    def call_tool(self, name, arguments):
-        payload = {
-            'jsonrpc': '2.0',
-            'method': 'callTool',
-            'params': {
-                'name': name,
-                'arguments': arguments
-            },
-            'id': 1
-        }
-
-        response = requests.post(
-            f'{self.base_url}/mcp',
-            headers=self.headers,
-            data=json.dumps(payload)
-        )
-
-        result = response.json()
-        if 'error' in result:
-            raise Exception(result['error']['message'])
-
-        return result['result']
-
-# Usage
-mcp = MCPClient('http://localhost:4000', 'your_token')
-result = mcp.call_tool('fetch_jira_ticket', {'ticketKey': 'PROJ-123'})
+```javascript
+// Tool call
+{
+  "name": "fetch_perplexity_data",
+  "arguments": {
+    "query": "Latest AI developments",
+    "model": "llama-3.1-sonar-small-128k-online"
+  }
+}
 ```
 
-### For DevOps Teams
+#### 3. Simple Math
 
-Monitoring and observability:
-
-```yaml
-# docker-compose.yml
-version: "3.8"
-services:
-  mcp-server:
-    build: .
-    ports:
-      - "4000:4000"
-    environment:
-      - MCP_HTTP_PORT=4000
-      - MCP_HTTP_TOKEN=${MCP_TOKEN}
-      - JIRA_OAUTH_CLIENT_ID=${JIRA_CLIENT_ID}
-      - JIRA_OAUTH_CLIENT_SECRET=${JIRA_CLIENT_SECRET}
-      - JIRA_CLOUD_ID=${JIRA_CLOUD_ID}
-      - PERPLEXITY_API_KEY=${PERPLEXITY_KEY}
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+```javascript
+// Tool call
+{
+  "name": "add_numbers",
+  "arguments": {
+    "numbers": [1, 2, 3, 4, 5]
+  }
+}
 ```
 
-### Testing & Validation
-
-Use the provided test suites:
+### HTTP API Examples
 
 ```bash
-# Quick validation
-./test-mcp-server.ps1
+# List available tools
+curl -X POST http://localhost:4000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/list",
+    "id": 1
+  }'
 
-# Comprehensive testing with custom endpoint
-./test-mcp-server.ps1 -BaseUrl "http://your-server:4000"
-
-# CI/CD integration
-./test-mcp-server.sh || exit 1
+# Fetch JIRA ticket
+curl -X POST http://localhost:4000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "fetch_ticket",
+      "arguments": {"ticketKey": "PROJ-123"}
+    },
+    "id": 2
+  }'
 ```
 
-### Troubleshooting
+## Testing
 
-Common issues and solutions:
+```bash
+# Run basic tests
+npm test
 
-1. **"Method not found" errors**: Ensure you're using correct method names or the HTTP bridge for automatic mapping
-2. **Timeout errors**: Check if STDIO child process is healthy via `/health` endpoint
-3. **Jira 403 errors**: Verify OAuth scopes and credentials
-4. **Performance issues**: Monitor `/health` for restart counts and inflight requests
+# Test JIRA integration specifically
+TEST_TICKET_KEY=PROJ-123 node -e "
+import('./src/jira-client.js').then(async m => {
+  const result = await m.fetchJiraTicketFull({
+    baseUrl: process.env.JIRA_BASE_URL,
+    issueKey: process.env.TEST_TICKET_KEY,
+    auth: { email: process.env.JIRA_EMAIL, apiToken: process.env.JIRA_API_TOKEN }
+  });
+  console.log('Success:', result.key, result.summary);
+}).catch(console.error);
+"
+```
 
-## Support & Contributing
+## JIRA Integration Details
 
-- **Issues**: Report via GitHub issues
-- **Documentation**: This README and inline code comments
-- **Testing**: Run test suites before deployment
-- **Security**: Never expose publicly without proper authentication
+### What the Enhanced Client Provides
+
+- **Comprehensive Data**: Single API call fetches complete ticket information
+- **Dynamic Field Discovery**: Automatically finds Story Points custom fields across different JIRA instances
+- **ADF Processing**: Converts Atlassian Document Format to readable plain text
+- **Related Issues**: Normalized linked issues with direction indicators
+- **Time Tracking**: Original estimate, remaining, and time spent information
+- **Attachments & Comments**: Recent activity and file information
+- **Parent/Subtask Relationships**: Complete hierarchy information
+
+### Sample JIRA Response
+
+```
+JIRA Ticket: SCRUM-8
+═══════════════════════════════════════════════════════════════
+
+BASIC INFORMATION:
+• Title: Functions for calculating basic data
+• Type: Story
+• Status: To Do (To Do)
+• Priority: Medium
+• Project: My Scrum Project (SCRUM)
+
+PEOPLE:
+• Assignee: Veljko
+• Reporter: mrdjan.stajic
+
+TIMELINE:
+• Created: 9/17/2025 10:30:45 AM
+• Updated: 9/17/2025 12:15:22 PM
+
+DESCRIPTION:
+This story involves creating basic calculation functions...
+
+PARENT ISSUE:
+• SCRUM-6: Hello world epic (To Do)
+
+SUBTASKS:
+• SCRUM-9: Implement addition function (To Do) - Unassigned
+• SCRUM-10: Implement subtraction function (To Do) - Unassigned
+...
+```
+
+## Pros and Cons
+
+### ✅ Pros
+
+**Architecture Benefits:**
+
+- **Pure Data Backbone**: Zero LLM processing maintains clean separation of concerns
+- **High Performance**: Direct API calls without AI overhead
+- **Deterministic**: Predictable responses, no AI hallucinations
+- **Cost Effective**: No LLM API costs for data fetching operations
+
+**JIRA Integration:**
+
+- **Robust Error Handling**: Specific error messages for different failure scenarios
+- **Dynamic Field Discovery**: Works across different JIRA instances and configurations
+- **Comprehensive Data**: Single API call gets complete ticket information
+- **Format Agnostic**: Handles both Cloud (ADF) and Server (HTML) JIRA instances
+
+**Technical:**
+
+- **Dual Transport**: Supports both stdio and HTTP for maximum flexibility
+- **Production Ready**: Comprehensive error handling and logging
+- **Well Tested**: Proven with real JIRA data and edge cases
+- **Easy Integration**: Standard MCP protocol compatibility
+
+### ❌ Cons
+
+**Limitations:**
+
+- **No AI Features**: Cannot provide insights, analysis, or intelligent responses
+- **JIRA Dependency**: Requires valid JIRA credentials and network access
+- **Limited Scope**: Only provides data fetching, no business logic
+- **Manual Configuration**: Requires environment setup for each deployment
+
+**Operational:**
+
+- **Network Dependencies**: Relies on external API availability
+- **Authentication Management**: API tokens need periodic renewal
+- **Single Point of Failure**: JIRA outages affect the entire data pipeline
+- **Limited Caching**: No built-in caching for frequently accessed tickets
+
+**Technical:**
+
+- **No Real-time Updates**: Polling-based, not event-driven
+- **Memory Usage**: Large tickets with many attachments can consume significant memory
+- **Error Recovery**: Limited automatic retry mechanisms for transient failures
+
+## Integration Examples
+
+### Third Lane Architecture
+
+```javascript
+// Lane A: Intent Detection (separate service)
+const intent = await detectIntent(userQuery);
+
+// Lane B: Data Fetching (this MCP server)
+const ticketData = await mcpCall("fetch_ticket", {
+  ticketKey: intent.ticketKey,
+});
+
+// Lane C: AI Analysis (separate service)
+const analysis = await analyzeData(ticketData, userQuery);
+```
+
+### Direct LLM Integration
+
+```python
+# Python MCP client example
+import mcp
+
+async def get_jira_data(ticket_key):
+    async with mcp.stdio_client("node", "src/server.js") as client:
+        result = await client.call_tool("fetch_ticket", {
+            "ticketKey": ticket_key
+        })
+        return result.content[0].text
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Submit a pull request
 
 ## License
 
-MIT
+MIT License - see LICENSE file for details
+
+## Support
+
+For issues and questions:
+
+- Check existing GitHub issues
+- Review the troubleshooting section in this README
+- Create a new issue with detailed information about your problem
+
+---
+
+**Note**: This MCP server is designed as a pure data backbone. For AI processing, analysis, or intelligent responses, integrate it with separate LLM services in a multi-lane architecture.
