@@ -94,6 +94,22 @@ class LocalMCPServer {
             required: ["ticketKey"],
           },
         },
+        {
+          name: "fetch_ticket",
+          description:
+            "Fetch a JIRA ticket by its key (Lane B enhanced compatibility)",
+          inputSchema: {
+            type: "object",
+            properties: {
+              ticketKey: {
+                type: "string",
+                description: "JIRA ticket key (e.g., SCRUM-42)",
+                pattern: "^[A-Z]+-[0-9]+$",
+              },
+            },
+            required: ["ticketKey"],
+          },
+        },
         this.perplexityTool.getToolDefinition(),
       ],
     };
@@ -125,6 +141,7 @@ class LocalMCPServer {
         case "add_numbers":
           return this.handleAddNumbers(args);
         case "fetch_jira_ticket":
+        case "fetch_ticket": // Lane B compatibility alias
           return this.handleFetchJiraTicket(args);
         case "fetch_perplexity_data":
           return this.perplexityTool.execute(args, _auth);
