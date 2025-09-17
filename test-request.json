@@ -1,0 +1,10 @@
+{
+  "method": "tools/call",
+  "params": {
+    "name": "fetch_ticket",
+    "arguments": {
+      "ticketKey": "SCRUM-8"
+    }
+  },
+  "id": 1
+}

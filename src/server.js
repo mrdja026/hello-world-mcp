@@ -126,6 +126,7 @@ class LocalMCPServer {
   }
 
   async handleCall(request) {
+    console.error("handleCall received:", JSON.stringify(request, null, 2));
     const { name, arguments: args, _auth } = request.params || {};
     console.error("Tool called:", name, args ? Object.keys(args) : "no args");
 
@@ -204,47 +205,259 @@ class LocalMCPServer {
     ).toString("base64");
 
     try {
+      // Enhanced API call with expand parameter for comprehensive data
       const res = await axios.get(
-        `${JIRA_CONFIG.baseUrl}/rest/api/3/issue/${ticketKey}`,
+        `${JIRA_CONFIG.baseUrl}/rest/api/2/issue/${ticketKey}`,
         {
           headers: {
             Authorization: `Basic ${auth}`,
             Accept: "application/json",
             "Content-Type": "application/json",
           },
+          params: {
+            // Get comprehensive data
+            expand:
+              "renderedFields,names,schema,transitions,operations,editmeta,changelog,versionedRepresentations",
+          },
         }
       );
 
       const issue = res.data;
       const fields = issue.fields;
+
+      console.error("API Response structure:", {
+        hasIssue: !!issue,
+        hasFields: !!fields,
+        hasStatus: !!fields?.status,
+        hasIssueType: !!fields?.issuetype,
+        fieldKeys: fields ? Object.keys(fields).slice(0, 10) : "no fields",
+      });
+
+      // Extract comprehensive issue information
       const info = {
+        // Basic fields
         key: issue.key,
+        id: issue.id,
+        self: issue.self,
         summary: fields.summary,
-        status: fields.status.name,
-        issueType: fields.issuetype.name,
-        priority: fields.priority?.name || "Not set",
-        assignee: fields.assignee?.displayName || "Unassigned",
-        reporter: fields.reporter?.displayName || "Unknown",
+        description: fields.description || "No description",
+
+        // Status and workflow
+        status: {
+          name: fields.status?.name || "Unknown",
+          id: fields.status?.id || "unknown",
+          statusCategory: fields.status?.statusCategory?.name || "Unknown",
+          description: fields.status?.description || "",
+        },
+
+        // Issue classification
+        issueType: {
+          name: fields.issuetype.name,
+          id: fields.issuetype.id,
+          description: fields.issuetype.description || "",
+          iconUrl: fields.issuetype.iconUrl,
+        },
+
+        // Priority
+        priority: fields.priority
+          ? {
+              name: fields.priority.name,
+              id: fields.priority.id,
+              iconUrl: fields.priority.iconUrl,
+            }
+          : { name: "Not set", id: null, iconUrl: null },
+
+        // People
+        assignee: fields.assignee
+          ? {
+              displayName: fields.assignee.displayName,
+              accountId: fields.assignee.accountId,
+              emailAddress: fields.assignee.emailAddress || "Hidden",
+              avatarUrls: fields.assignee.avatarUrls,
+            }
+          : { displayName: "Unassigned", accountId: null },
+
+        reporter: fields.reporter
+          ? {
+              displayName: fields.reporter.displayName,
+              accountId: fields.reporter.accountId,
+              emailAddress: fields.reporter.emailAddress || "Hidden",
+              avatarUrls: fields.reporter.avatarUrls,
+            }
+          : { displayName: "Unknown", accountId: null },
+
+        // Dates
         created: fields.created,
         updated: fields.updated,
-        description: fields.description || "No description",
+        duedate: fields.duedate || null,
+        resolutiondate: fields.resolutiondate || null,
+
+        // Project information
+        project: {
+          key: fields.project.key,
+          name: fields.project.name,
+          id: fields.project.id,
+          projectTypeKey: fields.project.projectTypeKey,
+        },
+
+        // Resolution
+        resolution: fields.resolution
+          ? {
+              name: fields.resolution.name,
+              description: fields.resolution.description,
+            }
+          : null,
+
+        // Components and versions
+        components:
+          fields.components?.map((comp) => ({
+            name: comp.name,
+            id: comp.id,
+            description: comp.description || "",
+          })) || [],
+
+        fixVersions:
+          fields.fixVersions?.map((version) => ({
+            name: version.name,
+            id: version.id,
+            description: version.description || "",
+            released: version.released,
+            releaseDate: version.releaseDate,
+          })) || [],
+
+        affectedVersions:
+          fields.versions?.map((version) => ({
+            name: version.name,
+            id: version.id,
+            description: version.description || "",
+            released: version.released,
+            releaseDate: version.releaseDate,
+          })) || [],
+
+        // Labels
+        labels: fields.labels || [],
+
+        // Environment
+        environment: fields.environment || null,
+
+        // Story points and estimation (common field names)
+        storyPoints: fields.customfield_10016 || fields.storypoints || null,
+        timeTracking: fields.timetracking
+          ? {
+              originalEstimate: fields.timetracking.originalEstimate,
+              remainingEstimate: fields.timetracking.remainingEstimate,
+              timeSpent: fields.timetracking.timeSpent,
+              originalEstimateSeconds:
+                fields.timetracking.originalEstimateSeconds,
+              remainingEstimateSeconds:
+                fields.timetracking.remainingEstimateSeconds,
+              timeSpentSeconds: fields.timetracking.timeSpentSeconds,
+            }
+          : null,
+
+        // Security level
+        security: fields.security
+          ? {
+              name: fields.security.name,
+              description: fields.security.description,
+            }
+          : null,
+
+        // Linked issues (if expanded)
+        linkedIssues:
+          issue.fields.issuelinks?.map((link) => ({
+            id: link.id,
+            type: {
+              name: link.type.name,
+              inward: link.type.inward,
+              outward: link.type.outward,
+            },
+            inwardIssue: link.inwardIssue
+              ? {
+                  key: link.inwardIssue.key,
+                  summary: link.inwardIssue.fields.summary,
+                  status: link.inwardIssue.fields.status.name,
+                  priority: link.inwardIssue.fields.priority?.name || "Not set",
+                }
+              : null,
+            outwardIssue: link.outwardIssue
+              ? {
+                  key: link.outwardIssue.key,
+                  summary: link.outwardIssue.fields.summary,
+                  status: link.outwardIssue.fields.status.name,
+                  priority:
+                    link.outwardIssue.fields.priority?.name || "Not set",
+                }
+              : null,
+          })) || [],
+
+        // Attachments count
+        attachmentsCount: fields.attachment?.length || 0,
+        attachments:
+          fields.attachment
+            ?.map((att) => ({
+              id: att.id,
+              filename: att.filename,
+              size: att.size,
+              mimeType: att.mimeType,
+              created: att.created,
+              author: att.author.displayName,
+            }))
+            .slice(0, 5) || [], // Limit to first 5 attachments
+
+        // Comments count
+        commentsCount: fields.comment?.total || 0,
+        recentComments:
+          fields.comment?.comments
+            ?.map((comment) => ({
+              id: comment.id,
+              author: comment.author.displayName,
+              body: comment.body,
+              created: comment.created,
+              updated: comment.updated,
+            }))
+            .slice(-3) || [], // Last 3 comments
+
+        // Watchers and votes
+        watchersCount: fields.watches?.watchCount || 0,
+        votesCount: fields.votes?.votes || 0,
+
+        // Progress
+        progress: fields.progress
+          ? {
+              progress: fields.progress.progress,
+              total: fields.progress.total,
+              percent: fields.progress.percent,
+            }
+          : null,
+
+        // Parent issue (for subtasks)
+        parent: fields.parent
+          ? {
+              key: fields.parent.key,
+              summary: fields.parent.fields.summary,
+              status: fields.parent.fields.status.name,
+            }
+          : null,
+
+        // Subtasks
+        subtasks:
+          fields.subtasks?.map((subtask) => ({
+            key: subtask.key,
+            summary: subtask.fields.summary,
+            status: subtask.fields.status.name,
+            assignee: subtask.fields.assignee?.displayName || "Unassigned",
+          })) || [],
       };
+
+      // Format comprehensive response
+      const responseText = this.formatJiraTicketResponse(info);
 
       return {
         content: [
           {
             type: "text",
-            text: `JIRA Ticket: ${info.key}
-Title: ${info.summary}
-Status: ${info.status}
-Type: ${info.issueType}
-Priority: ${info.priority}
-Assignee: ${info.assignee}
-Reporter: ${info.reporter}
-Created: ${new Date(info.created).toLocaleDateString()}
-Updated: ${new Date(info.updated).toLocaleDateString()}
-
-Description: ${info.description}`,
+            text: responseText,
           },
         ],
       };
@@ -267,6 +480,126 @@ Description: ${info.description}`,
       }
       throw new McpError(ErrorCode.InternalError, err.message);
     }
+  }
+
+  formatJiraTicketResponse(info) {
+    let response = `JIRA Ticket: ${info.key}
+═══════════════════════════════════════════════════════════════
+
+BASIC INFORMATION:
+• Title: ${info.summary}
+• Type: ${info.issueType.name}
+• Status: ${info.status.name} (${info.status.statusCategory})
+• Priority: ${info.priority.name}
+• Project: ${info.project.name} (${info.project.key})
+
+PEOPLE:
+• Assignee: ${info.assignee.displayName}
+• Reporter: ${info.reporter.displayName}
+
+TIMELINE:
+• Created: ${new Date(info.created).toLocaleDateString()} ${new Date(
+      info.created
+    ).toLocaleTimeString()}
+• Updated: ${new Date(info.updated).toLocaleDateString()} ${new Date(
+      info.updated
+    ).toLocaleTimeString()}`;
+
+    if (info.duedate) {
+      response += `\n• Due Date: ${new Date(
+        info.duedate
+      ).toLocaleDateString()}`;
+    }
+    if (info.resolutiondate) {
+      response += `\n• Resolved: ${new Date(
+        info.resolutiondate
+      ).toLocaleDateString()}`;
+    }
+
+    response += `\n\nDESCRIPTION:
+${info.description}`;
+
+    if (info.resolution) {
+      response += `\n\nRESOLUTION:
+• Status: ${info.resolution.name}
+• Details: ${info.resolution.description}`;
+    }
+
+    if (info.components.length > 0) {
+      response += `\n\nCOMPONENTS:
+${info.components
+  .map((comp) => `• ${comp.name}: ${comp.description}`)
+  .join("\n")}`;
+    }
+
+    if (info.fixVersions.length > 0) {
+      response += `\n\nFIX VERSIONS:
+${info.fixVersions
+  .map((ver) => `• ${ver.name} (Released: ${ver.released ? "Yes" : "No"})`)
+  .join("\n")}`;
+    }
+
+    if (info.labels.length > 0) {
+      response += `\n\nLABELS:
+${info.labels.join(", ")}`;
+    }
+
+    if (info.linkedIssues.length > 0) {
+      response += `\n\nLINKED ISSUES:`;
+      info.linkedIssues.forEach((link) => {
+        if (link.inwardIssue) {
+          response += `\n• ${link.type.inward}: ${link.inwardIssue.key} - ${link.inwardIssue.summary} (${link.inwardIssue.status})`;
+        }
+        if (link.outwardIssue) {
+          response += `\n• ${link.type.outward}: ${link.outwardIssue.key} - ${link.outwardIssue.summary} (${link.outwardIssue.status})`;
+        }
+      });
+    }
+
+    if (info.parent) {
+      response += `\n\nPARENT ISSUE:
+• ${info.parent.key}: ${info.parent.summary} (${info.parent.status})`;
+    }
+
+    if (info.subtasks.length > 0) {
+      response += `\n\nSUBTASKS:`;
+      info.subtasks.forEach((subtask) => {
+        response += `\n• ${subtask.key}: ${subtask.summary} (${subtask.status}) - ${subtask.assignee}`;
+      });
+    }
+
+    if (info.timeTracking) {
+      response += `\n\nTIME TRACKING:`;
+      if (info.timeTracking.originalEstimate)
+        response += `\n• Original Estimate: ${info.timeTracking.originalEstimate}`;
+      if (info.timeTracking.remainingEstimate)
+        response += `\n• Remaining: ${info.timeTracking.remainingEstimate}`;
+      if (info.timeTracking.timeSpent)
+        response += `\n• Time Spent: ${info.timeTracking.timeSpent}`;
+    }
+
+    if (info.storyPoints) {
+      response += `\n\nSTORY POINTS: ${info.storyPoints}`;
+    }
+
+    response += `\n\nACTIVITY:
+• Comments: ${info.commentsCount}
+• Attachments: ${info.attachmentsCount}
+• Watchers: ${info.watchersCount}
+• Votes: ${info.votesCount}`;
+
+    if (info.recentComments.length > 0) {
+      response += `\n\nRECENT COMMENTS:`;
+      info.recentComments.forEach((comment) => {
+        response += `\n• ${comment.author} (${new Date(
+          comment.created
+        ).toLocaleDateString()}): ${comment.body.substring(0, 100)}${
+          comment.body.length > 100 ? "..." : ""
+        }`;
+      });
+    }
+
+    return response;
   }
 
   async start() {
@@ -316,7 +649,7 @@ Description: ${info.description}`,
             break;
           case "tools/call":
           case "callTool":
-            result = await this.handleCall({ params });
+            result = await this.handleCall({ params: params });
             break;
           case "resources/list":
             result = await this.handleListResources();
