@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-
+//MARKER MRDJAN
 import express from "express";
 import cors from "cors";
 import { spawn } from "node:child_process";
@@ -95,7 +95,7 @@ class HTTPBridge {
           "http://127.0.0.1:4000",
         ],
         credentials: true,
-      })
+      }),
     );
 
     this.app.use(express.json({ limit: "10mb" }));
@@ -173,12 +173,12 @@ class HTTPBridge {
         const duration = Date.now() - startTime;
 
         console.error(
-          `[BRIDGE] ${normalized.method} completed in ${duration}ms`
+          `[BRIDGE] ${normalized.method} completed in ${duration}ms`,
         );
 
         if (duration > 5000) {
           console.error(
-            `[BRIDGE] SLO_WARNING: ${normalized.method} took ${duration}ms (>5s)`
+            `[BRIDGE] SLO_WARNING: ${normalized.method} took ${duration}ms (>5s)`,
           );
         }
 
@@ -190,7 +190,7 @@ class HTTPBridge {
         const duration = Date.now() - startTime;
         console.error(
           `[BRIDGE] ${method} failed after ${duration}ms:`,
-          error.message
+          error.message,
         );
 
         res.status(500).json({
@@ -233,7 +233,7 @@ class HTTPBridge {
 
     this.child.on("exit", (code, signal) => {
       console.error(
-        `[BRIDGE] Child process exited with code ${code}, signal ${signal}`
+        `[BRIDGE] Child process exited with code ${code}, signal ${signal}`,
       );
       this.handleChildExit(code);
     });
@@ -269,14 +269,14 @@ class HTTPBridge {
         } else {
           console.error(
             "[BRIDGE] Received response for unknown request ID:",
-            message.id
+            message.id,
           );
         }
       } catch (error) {
         console.error(
           "[BRIDGE] Failed to parse child output:",
           line,
-          error.message
+          error.message,
         );
       }
     }
@@ -299,7 +299,7 @@ class HTTPBridge {
       this.restartCount++;
 
       console.error(
-        `[BRIDGE] Auto-restarting child process (attempt ${this.restartCount}/${this.maxRestarts})`
+        `[BRIDGE] Auto-restarting child process (attempt ${this.restartCount}/${this.maxRestarts})`,
       );
 
       setTimeout(() => {
@@ -308,7 +308,7 @@ class HTTPBridge {
       }, 1000 * this.restartCount); // Exponential backoff
     } else {
       console.error(
-        `[BRIDGE] Child process restart limit reached (${this.maxRestarts})`
+        `[BRIDGE] Child process restart limit reached (${this.maxRestarts})`,
       );
     }
   }
@@ -353,7 +353,7 @@ class HTTPBridge {
     return new Promise((resolve, reject) => {
       const server = this.app.listen(port, "127.0.0.1", () => {
         console.error(
-          `[BRIDGE] MCP HTTP bridge running on http://127.0.0.1:${port}`
+          `[BRIDGE] MCP HTTP bridge running on http://127.0.0.1:${port}`,
         );
         resolve(server);
       });

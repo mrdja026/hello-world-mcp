@@ -15,7 +15,7 @@ import express from "express";
 import cors from "cors";
 import { PerplexityTool } from "./tools/perplexity.js";
 import { fetchJiraTicketFull } from "./jira-client.js";
-
+//OMEGALOL
 // Load environment variables
 dotenv.config();
 
@@ -39,24 +39,24 @@ class LocalMCPServer {
           tools: {},
           resources: {},
         },
-      }
+      },
     );
 
     // Handlers for MCP protocol methods
     this.server.setRequestHandler(ListToolsRequestSchema, async () =>
-      this.handleListTools()
+      this.handleListTools(),
     );
 
     this.server.setRequestHandler(ListResourcesRequestSchema, async () =>
-      this.handleListResources()
+      this.handleListResources(),
     );
 
     this.server.setRequestHandler(ReadResourceRequestSchema, async (request) =>
-      this.handleReadResource(request)
+      this.handleReadResource(request),
     );
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) =>
-      this.handleCall(request)
+      this.handleCall(request),
     );
   }
 
@@ -133,7 +133,7 @@ class LocalMCPServer {
     if (!name) {
       throw new McpError(
         ErrorCode.InvalidRequest,
-        "Missing tool name in request"
+        "Missing tool name in request",
       );
     }
 
@@ -164,7 +164,7 @@ class LocalMCPServer {
     if (numbers.length < 2) {
       throw new McpError(
         ErrorCode.InvalidParams,
-        "At least 2 numbers are required"
+        "At least 2 numbers are required",
       );
     }
     for (const n of numbers) {
@@ -178,7 +178,7 @@ class LocalMCPServer {
         {
           type: "text",
           text: `Added ${numbers.length} numbers: ${numbers.join(
-            " + "
+            " + ",
           )} = ${sum}`,
         },
       ],
@@ -190,13 +190,13 @@ class LocalMCPServer {
     if (!ticketKey || typeof ticketKey !== "string") {
       throw new McpError(
         ErrorCode.InvalidParams,
-        "Ticket key is required and must be a string"
+        "Ticket key is required and must be a string",
       );
     }
     if (!/^[A-Z]+-[0-9]+$/.test(ticketKey)) {
       throw new McpError(
         ErrorCode.InvalidParams,
-        "Invalid ticket key format. Expected format: PROJ-123"
+        "Invalid ticket key format. Expected format: PROJ-123",
       );
     }
 
@@ -260,20 +260,20 @@ PEOPLE:
 
 TIMELINE:
 • Created: ${new Date(info.created).toLocaleDateString()} ${new Date(
-      info.created
+      info.created,
     ).toLocaleTimeString()}
 • Updated: ${new Date(info.updated).toLocaleDateString()} ${new Date(
-      info.updated
+      info.updated,
     ).toLocaleTimeString()}`;
 
     if (info.duedate) {
       response += `\n• Due Date: ${new Date(
-        info.duedate
+        info.duedate,
       ).toLocaleDateString()}`;
     }
     if (info.resolutiondate) {
       response += `\n• Resolved: ${new Date(
-        info.resolutiondate
+        info.resolutiondate,
       ).toLocaleDateString()}`;
     }
 
@@ -353,7 +353,7 @@ ${info.labels.join(", ")}`;
       response += `\n\nRECENT COMMENTS:`;
       info.recentComments.forEach((comment) => {
         response += `\n• ${comment.author} (${new Date(
-          comment.created
+          comment.created,
         ).toLocaleDateString()}): ${comment.body.substring(0, 100)}${
           comment.body.length > 100 ? "..." : ""
         }`;
@@ -378,7 +378,7 @@ ${info.labels.join(", ")}`;
       cors({
         origin: ["http://localhost:8080", "http://127.0.0.1:8080"],
         credentials: true,
-      })
+      }),
     );
     app.use(express.json());
 
