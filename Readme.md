@@ -346,3 +346,15 @@ For issues and questions:
 ---
 
 **Note**: This MCP server is designed as a pure data backbone. For AI processing, analysis, or intelligent responses, integrate it with separate LLM services in a multi-lane architecture.
+
+#TODO
+
+- check when its apropriate to go into chat mode
+- chek when it is apropriate to go into analyss mode
+- it should be better to do the raw mcp query that returns raw data then feed that into one of the lances
+- test it
+- mora pre jer je vezano ako ne postoji prekini i kazi nema
+- e2e tests
+- add more features than for ticket (logic is there querymatcher and lanes needs to be aligned and example queries)
+- investigate //TODO find lane b i think
+- Random failuers to call final model (not that important since its gonna be provider anyhow)
