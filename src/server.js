@@ -11,6 +11,7 @@ import {
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 import dotenv from "dotenv";
+import axios from "axios";
 import express from "express";
 import cors from "cors";
 import { PerplexityTool } from "./tools/perplexity.js";
@@ -36,6 +37,15 @@ class LocalMCPServer {
   constructor() {
     // Initialize tool instances
     this.perplexityTool = new PerplexityTool();
+    // Diagnostics state and axios defaults
+    this.lastErrorSummary = null;
+    try {
+      // 35s default timeout unless overridden via AXIOS_TIMEOUT_MS
+      const t = parseInt(process.env.AXIOS_TIMEOUT_MS || "35000", 10);
+      if (!Number.isNaN(t)) {
+        axios.defaults.timeout = t;
+      }
+    } catch {}
 
     // Declare tools in capabilities.tools
     this.server = new Server(
@@ -45,24 +55,24 @@ class LocalMCPServer {
           tools: {},
           resources: {},
         },
-      }
+      },
     );
 
     // Handlers for MCP protocol methods
     this.server.setRequestHandler(ListToolsRequestSchema, async () =>
-      this.handleListTools()
+      this.handleListTools(),
     );
 
     this.server.setRequestHandler(ListResourcesRequestSchema, async () =>
-      this.handleListResources()
+      this.handleListResources(),
     );
 
     this.server.setRequestHandler(ReadResourceRequestSchema, async (request) =>
-      this.handleReadResource(request)
+      this.handleReadResource(request),
     );
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) =>
-      this.handleCall(request)
+      this.handleCall(request),
     );
   }
 
@@ -276,7 +286,7 @@ class LocalMCPServer {
     if (!name) {
       throw new McpError(
         ErrorCode.InvalidRequest,
-        "Missing tool name in request"
+        "Missing tool name in request",
       );
     }
 
@@ -315,7 +325,7 @@ class LocalMCPServer {
     if (numbers.length < 2) {
       throw new McpError(
         ErrorCode.InvalidParams,
-        "At least 2 numbers are required"
+        "At least 2 numbers are required",
       );
     }
     for (const n of numbers) {
@@ -329,7 +339,7 @@ class LocalMCPServer {
         {
           type: "text",
           text: `Added ${numbers.length} numbers: ${numbers.join(
-            " + "
+            " + ",
           )} = ${sum}`,
         },
       ],
@@ -341,13 +351,13 @@ class LocalMCPServer {
     if (!ticketKey || typeof ticketKey !== "string") {
       throw new McpError(
         ErrorCode.InvalidParams,
-        "Ticket key is required and must be a string"
+        "Ticket key is required and must be a string",
       );
     }
     if (!/^[A-Z]+-[0-9]+$/.test(ticketKey)) {
       throw new McpError(
         ErrorCode.InvalidParams,
-        "Invalid ticket key format. Expected format: PROJ-123"
+        "Invalid ticket key format. Expected format: PROJ-123",
       );
     }
 
@@ -378,18 +388,29 @@ class LocalMCPServer {
         ],
       };
     } catch (error) {
-      console.error("Enhanced JIRA client error:", error.message);
+      const status = error?.response?.status;
+      let dataSnippet;
+      try {
+        dataSnippet = JSON.stringify(error?.response?.data)?.slice(0, 1000);
+      } catch {}
+      console.error("Enhanced JIRA client error:", error?.message || error, {
+        status,
+        dataSnippet,
+      });
 
       // Convert to MCP error format
-      if (error.message.includes("not found")) {
+      if (String(error?.message || "").includes("not found")) {
         throw new McpError(ErrorCode.InvalidParams, error.message);
       } else if (
-        error.message.includes("authentication") ||
-        error.message.includes("access denied")
+        String(error?.message || "").includes("authentication") ||
+        String(error?.message || "").includes("access denied")
       ) {
         throw new McpError(ErrorCode.InvalidParams, error.message);
       } else {
-        throw new McpError(ErrorCode.InternalError, error.message);
+        throw new McpError(
+          ErrorCode.InternalError,
+          error.message || "unknown error",
+        );
       }
     }
   }
@@ -398,7 +419,7 @@ class LocalMCPServer {
     const { query, status, categoryId, maxResults = 50 } = args || {};
 
     console.log(
-      `Searching JIRA projects with query: "${query}", status: ${status}`
+      `Searching JIRA projects with query: "${query}", status: ${status}`,
     );
 
     try {
@@ -434,7 +455,7 @@ class LocalMCPServer {
       console.error("Project search error:", error.message);
       throw new McpError(
         ErrorCode.InternalError,
-        `Failed to search projects: ${error.message}`
+        `Failed to search projects: ${error.message}`,
       );
     }
   }
@@ -451,7 +472,7 @@ class LocalMCPServer {
     } = args || {};
 
     console.log(
-      `Searching JIRA boards with name: "${name}", type: ${type}, project: ${projectKeyOrId}`
+      `Searching JIRA boards with name: "${name}", type: ${type}, project: ${projectKeyOrId}`,
     );
 
     try {
@@ -490,7 +511,7 @@ class LocalMCPServer {
       console.error("Board search error:", error.message);
       throw new McpError(
         ErrorCode.InternalError,
-        `Failed to search boards: ${error.message}`
+        `Failed to search boards: ${error.message}`,
       );
     }
   }
@@ -506,7 +527,7 @@ class LocalMCPServer {
     } = args || {};
 
     console.log(
-      `Searching projects with boards - project query: "${projectQuery}", board type: ${boardType}`
+      `Searching projects with boards - project query: "${projectQuery}", board type: ${boardType}`,
     );
 
     try {
@@ -532,7 +553,7 @@ class LocalMCPServer {
           projectQuery,
           projectStatus,
           boardType,
-        }
+        },
       );
 
       return {
@@ -547,7 +568,7 @@ class LocalMCPServer {
       console.error("Projects with boards search error:", error.message);
       throw new McpError(
         ErrorCode.InternalError,
-        `Failed to search projects with boards: ${error.message}`
+        `Failed to search projects with boards: ${error.message}`,
       );
     }
   }
@@ -558,7 +579,7 @@ class LocalMCPServer {
     if (!projectKeyOrId || typeof projectKeyOrId !== "string") {
       throw new McpError(
         ErrorCode.InvalidParams,
-        "Project key or ID is required and must be a string"
+        "Project key or ID is required and must be a string",
       );
     }
 
@@ -577,7 +598,7 @@ class LocalMCPServer {
 
       console.log(`Successfully fetched project tree for: ${projectKeyOrId}`);
       console.log(
-        `Stats: ${projectTree.stats.epics} epics, ${projectTree.stats.children} issues, ${projectTree.stats.subtasks} subtasks`
+        `Stats: ${projectTree.stats.epics} epics, ${projectTree.stats.children} issues, ${projectTree.stats.subtasks} subtasks`,
       );
 
       // Format the response for better readability
@@ -592,10 +613,18 @@ class LocalMCPServer {
         ],
       };
     } catch (error) {
-      console.error("Project tree fetch error:", error.message);
+      const status = error?.response?.status;
+      let dataSnippet;
+      try {
+        dataSnippet = JSON.stringify(error?.response?.data)?.slice(0, 1000);
+      } catch {}
+      console.error("Project tree fetch error:", error?.message || error, {
+        status,
+        dataSnippet,
+      });
       throw new McpError(
         ErrorCode.InternalError,
-        `Failed to fetch project tree: ${error.message}`
+        `Failed to fetch project tree: ${error?.message || "unknown error"}`,
       );
     }
   }
@@ -623,7 +652,7 @@ EPIC BREAKDOWN:
       const subtaskCount =
         epic.children?.reduce(
           (sum, child) => sum + (child.subtasks?.length || 0),
-          0
+          0,
         ) || 0;
 
       response += `\n\n${index + 1}. EPIC: ${epic.key} - ${epic.summary}
@@ -742,9 +771,9 @@ SEARCH PARAMETERS:`;
           if (sprint.goal) response += `\n       Goal: ${sprint.goal}`;
           if (sprint.startDate && sprint.endDate) {
             response += `\n       Duration: ${new Date(
-              sprint.startDate
+              sprint.startDate,
             ).toLocaleDateString()} - ${new Date(
-              sprint.endDate
+              sprint.endDate,
             ).toLocaleDateString()}`;
           }
         });
@@ -823,20 +852,20 @@ PEOPLE:
 
 TIMELINE:
 • Created: ${new Date(info.created).toLocaleDateString()} ${new Date(
-      info.created
+      info.created,
     ).toLocaleTimeString()}
 • Updated: ${new Date(info.updated).toLocaleDateString()} ${new Date(
-      info.updated
+      info.updated,
     ).toLocaleTimeString()}`;
 
     if (info.duedate) {
       response += `\n• Due Date: ${new Date(
-        info.duedate
+        info.duedate,
       ).toLocaleDateString()}`;
     }
     if (info.resolutiondate) {
       response += `\n• Resolved: ${new Date(
-        info.resolutiondate
+        info.resolutiondate,
       ).toLocaleDateString()}`;
     }
 
@@ -952,12 +981,12 @@ ${info.labels.join(", ")}`;
 • State: ${info.activeSprint.state}`;
       if (info.activeSprint.startDate) {
         response += `\n• Start: ${new Date(
-          info.activeSprint.startDate
+          info.activeSprint.startDate,
         ).toLocaleDateString()}`;
       }
       if (info.activeSprint.endDate) {
         response += `\n• End: ${new Date(
-          info.activeSprint.endDate
+          info.activeSprint.endDate,
         ).toLocaleDateString()}`;
       }
       if (info.activeSprint.goal) {
@@ -992,7 +1021,7 @@ ${info.labels.join(", ")}`;
       response += `\n\nRECENT COMMENTS:`;
       info.recentComments.forEach((comment) => {
         response += `\n• ${comment.author} (${new Date(
-          comment.created
+          comment.created,
         ).toLocaleDateString()}): ${comment.body.substring(0, 100)}${
           comment.body.length > 100 ? "..." : ""
         }`;
@@ -1017,18 +1046,74 @@ ${info.labels.join(", ")}`;
       cors({
         origin: ["http://localhost:8080", "http://127.0.0.1:8080"],
         credentials: true,
-      })
+      }),
     );
-    app.use(express.json());
+    app.use(
+      express.json({
+        limit: "2mb",
+        verify: (req, res, buf) => {
+          try {
+            req.rawBodyLen = buf?.length || 0;
+            req.rawBody = buf?.toString?.("utf8");
+          } catch {}
+        },
+      }),
+    );
+    app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+
+    // Body parse error handler to return JSON-RPC parse error
+    app.use((err, req, res, next) => {
+      if (err instanceof SyntaxError && "body" in err) {
+        const id = (req.body && req.body.id) || Date.now();
+        const rawLen = req.rawBodyLen || 0;
+        const snippet =
+          typeof req.rawBody === "string" ? req.rawBody.slice(0, 500) : "";
+        console.error("JSON parse error on /mcp:", err.message, {
+          contentLength: req.headers["content-length"],
+          rawBodyLen: rawLen,
+          snippet,
+        });
+        return res.status(400).json({
+          jsonrpc: "2.0",
+          error: {
+            code: -32700,
+            message: "Parse error",
+            data: { rawBodyLen: rawLen },
+          },
+          id,
+        });
+      }
+      return next(err);
+    });
 
     // Health check endpoint
-    app.get("/health", (req, res) => {
-      res.json({ status: "ok", transport: "http", stdio: false });
+    app.get("/health", async (req, res) => {
+      const tools =
+        (await this.handleListTools())?.tools?.map((t) => t.name) || [];
+      res.json({
+        status: "ok",
+        transport: "http",
+        stdio: false,
+        parserLimit: "2mb",
+        env: {
+          JIRA_BASE_URL: JIRA_CONFIG.baseUrl ? "set" : "",
+          JIRA_EMAIL: JIRA_CONFIG.email ? "set" : "",
+          JIRA_API_TOKEN: JIRA_CONFIG.apiToken ? "set" : "",
+        },
+        tools,
+        lastErrorSummary: this.lastErrorSummary || null,
+      });
     });
 
     // Main MCP JSON-RPC endpoint
     app.post("/mcp", async (req, res) => {
       const { method, params, id = Date.now() } = req.body || {};
+      try {
+        const clen = req.headers["content-length"];
+        console.error(
+          `HTTP /mcp request: method=${method} content-length=${clen} rawBodyLen=${req.rawBodyLen ?? 0}`,
+        );
+      } catch {}
 
       // Optional simple auth via header
       const authToken = process.env.MCP_HTTP_TOKEN;
@@ -1072,13 +1157,30 @@ ${info.labels.join(", ")}`;
           id,
         });
       } catch (error) {
-        console.error("HTTP MCP error:", error);
+        console.error("HTTP MCP error:", error?.message || error);
         const isMcpError = error instanceof McpError;
+        // capture last error summary for /health
+        try {
+          this.lastErrorSummary = {
+            time: new Date().toISOString(),
+            method: (req.body && req.body.method) || null,
+            status: error?.response?.status || (isMcpError ? 400 : 500),
+            message: error?.message || String(error),
+          };
+        } catch {}
+        const bodySnippet = (() => {
+          try {
+            return JSON.stringify(error?.response?.data)?.slice(0, 1000);
+          } catch {
+            return undefined;
+          }
+        })();
         res.status(isMcpError ? 400 : 500).json({
           jsonrpc: "2.0",
           error: {
             code: isMcpError ? error.code : -32603,
             message: error.message || "Internal error",
+            data: bodySnippet ? { upstream: bodySnippet } : undefined,
           },
           id,
         });
