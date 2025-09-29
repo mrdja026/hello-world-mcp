@@ -20,75 +20,42 @@ function findFieldIdByDisplay(names = {}, regexes = []) {
 
 const idNum = (customfield) => (customfield || "").replace(/^customfield_/, "");
 
-/** ---------- JQL search with pagination (POST /rest/api/3/search only) ---------- */
+/** ---------- JQL search with pagination (Enhanced Search: /rest/api/3/search/jql) ---------- */
 async function jqlSearchPaged({
   baseUrl,
   headers,
   jql,
   fields = [],
   pageSize = 100,
-  expandNamesOnce = false,
 }) {
-  const url = `${baseUrl.replace(/\/+$/, "")}/rest/api/3/search`;
   const urlJql = `${baseUrl.replace(/\/+$/, "")}/rest/api/3/search/jql`;
   const issues = [];
-  let startAt = 0;
-  let names = null;
-
+  let nextPageToken = undefined;
   while (true) {
     const body = {
       jql,
-      startAt,
       maxResults: pageSize,
       fields: fields.length ? fields : [],
       fieldsByKeys: false,
-      // omit validate/validateQuery for maximum compatibility
-      // Avoid expand to prevent payload incompatibilities; keep minimal
+      ...(nextPageToken ? { nextPageToken } : {}),
     };
-    let data;
-    try {
-      ({ data } = await axios.post(urlJql, body, {
-        headers: { ...headers, "Content-Type": "application/json" },
-      }));
-    } catch (err1) {
-      try {
-        ({ data } = await axios.post(url, body, {
-          headers: { ...headers, "Content-Type": "application/json" },
-        }));
-      } catch (err2) {
-        // Last-resort: GET /search with query params
-        const params = {
-          jql,
-          startAt,
-          maxResults: pageSize,
-        };
-        if (fields.length) params.fields = fields.join(",");
-        const resp = await axios.get(url, { headers, params });
-        data = resp.data;
-      }
-    }
-    // Some sites still return names in POST body when requested; ignore for now
-    if (expandNamesOnce && startAt === 0 && data?.names && !names)
-      names = data.names;
-
-    const page = Array.isArray(data?.issues) ? data.issues : [];
-    issues.push(...page);
-    if (!page.length || startAt + page.length >= (data.total || 0)) break;
-    startAt += page.length;
+    const { data } = await axios.post(urlJql, body, {
+      headers: {
+        ...headers,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+    });
+    issues.push(...(data?.issues || []));
+    nextPageToken = data?.nextPageToken;
+    if (!nextPageToken) break;
   }
-
-  return { issues, names };
+  return { issues };
 }
 
 /** ---------- Normalize a subset of fields for nodes ---------- */
-function normIssue(issue, { storyPointsFieldId, sprintFieldId } = {}) {
+function normIssue(issue) {
   const f = issue.fields || {};
-  const sp =
-    storyPointsFieldId && f.hasOwnProperty(storyPointsFieldId)
-      ? f[storyPointsFieldId]
-      : null;
-  const sprint =
-    sprintFieldId && f.hasOwnProperty(sprintFieldId) ? f[sprintFieldId] : null;
 
   return {
     id: issue.id,
@@ -99,21 +66,7 @@ function normIssue(issue, { storyPointsFieldId, sprintFieldId } = {}) {
     priority: f.priority?.name || null,
     assignee: f.assignee?.displayName || null,
     reporter: f.reporter?.displayName || null,
-    storyPoints: typeof sp === "number" ? sp : sp ? Number(sp) : null,
-    sprint: sprint || null,
-    timeTracking: {
-      originalEstimate: f.timetracking?.originalEstimate ?? null,
-      remainingEstimate: f.timetracking?.remainingEstimate ?? null,
-      timeSpent: f.timetracking?.timeSpent ?? null,
-      originalEstimateSeconds: f.timeoriginalestimate ?? null,
-      remainingEstimateSeconds: f.timeestimate ?? null,
-      timeSpentSeconds: f.timespent ?? null,
-      aggregate: {
-        originalEstimateSeconds: f.aggregatetimeoriginalestimate ?? null,
-        remainingEstimateSeconds: f.aggregatetimeestimate ?? null,
-        timeSpentSeconds: f.aggregatetimespent ?? null,
-      },
-    },
+    parentKey: f.parent?.key || null,
   };
 }
 
@@ -126,71 +79,60 @@ async function fetchProjectTree3Levels({
 }) {
   const headers = { Accept: "application/json", ...makeAuthHeader(auth) };
 
-  // 0) Discover Story Points + Sprint IDs once via expand=names
-  //    (We can piggyback on the epics query to get `names`.)
+  // Minimal field set to keep payloads simple and compatible
   const baseFields = [
+    "key",
     "summary",
-    "status",
     "issuetype",
-    "priority",
+    "status",
     "assignee",
     "reporter",
-    "timetracking",
-    "timeoriginalestimate",
-    "timeestimate",
-    "timespent",
-    "aggregatetimeoriginalestimate",
-    "aggregatetimeestimate",
-    "aggregatetimespent",
-    "subtasks",
+    "priority",
     "parent",
+    "subtasks",
   ];
 
   // 1) Get all Epics in the project (discover custom fields once)
   const epicsJql = `project = "${projectKeyOrId}" AND issuetype = Epic ORDER BY rank`;
-  const { issues: epicIssues, names } = await jqlSearchPaged({
+  const { issues: epicIssues } = await jqlSearchPaged({
     baseUrl,
     headers,
     jql: epicsJql,
     fields: baseFields,
     pageSize,
-    expandNamesOnce: false,
   });
 
-  // Map field ids
-  const storyPointsFieldId = findFieldIdByDisplay(names || {}, [
-    /story\s*points?/i,
-    /story\s*point\s*estimate/i,
-  ]);
-  const sprintFieldId = findFieldIdByDisplay(names || {}, [/^sprint$/i]);
-
   // Normalize epics
-  const epics = epicIssues.map((e) =>
-    normIssue(e, { storyPointsFieldId, sprintFieldId })
-  );
+  const epics = epicIssues.map((e) => normIssue(e));
   const epicKeys = epics.map((e) => e.key);
   const epicKeySet = new Set(epicKeys);
 
-  // 2) Get children per epic via "Epic Link" (simple and reliable across projects)
+  // 2) Get direct children of the epics via parent IN (forward-compatible)
   let childIssues = [];
+  const childrenByEpic = new Map(epicKeys.map((k) => [k, []]));
   if (epicKeys.length) {
-    for (const epicKey of epicKeys) {
-      const childrenJql = `project = "${projectKeyOrId}" AND \"Epic Link\" = ${epicKey}`;
-      const { issues: children } = await jqlSearchPaged({
-        baseUrl,
-        headers,
-        jql: childrenJql,
-        fields: baseFields,
-        pageSize,
-      });
-      const normalized = children.map((i) => normIssue(i, {}));
-      childIssues.push(...normalized);
-      if (!childrenByEpic.has(epicKey)) childrenByEpic.set(epicKey, []);
-      childrenByEpic.get(epicKey).push(...normalized);
+    const chunk = (arr, n = 50) =>
+      arr.reduce((a, _, i) => (i % n ? a : [...a, arr.slice(i, i + n)]), []);
+    const epicChunks = chunk(epicKeys, 50);
+    const orClauses = epicChunks.map(
+      (ks) => `parent in (${ks.map((k) => `"${k}"`).join(",")})`
+    );
+    const childrenJql = `project = "${projectKeyOrId}" AND (${orClauses.join(
+      " OR "
+    )}) ORDER BY Rank`;
+    const { issues: children } = await jqlSearchPaged({
+      baseUrl,
+      headers,
+      jql: childrenJql,
+      fields: baseFields,
+      pageSize,
+    });
+    childIssues = children.map((i) => normIssue(i));
+    for (const c of childIssues) {
+      const p = c.parentKey;
+      if (p && epicKeySet.has(p)) childrenByEpic.get(p).push(c);
     }
   }
-
-  const childrenByEpic = new Map(epicKeys.map((k) => [k, []]));
 
   // childrenByEpic already populated by epic-specific queries above
 
@@ -210,17 +152,12 @@ async function fetchProjectTree3Levels({
         baseUrl,
         headers,
         jql: `parent in (${group.map((k) => `"${k}"`).join(",")})`,
-        fields: baseFields.concat(
-          storyPointsFieldId ? [storyPointsFieldId] : [],
-          sprintFieldId ? [sprintFieldId] : []
-        ),
+        fields: baseFields,
         pageSize,
       });
       allSubtasks.push(...issues);
     }
-    const normalizedSubs = allSubtasks.map((s) =>
-      normIssue(s, { storyPointsFieldId, sprintFieldId })
-    );
+    const normalizedSubs = allSubtasks.map((s) => normIssue(s));
     subtasksByParent = new Map();
 
     // rehydrate parent mapping from the already fetched 'parent' field
